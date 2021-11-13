@@ -416,3 +416,12 @@ class TypeScopeOp:
   @property
   def body(self):
     return self.regions[0].blocks[0]
+
+
+class NameOp:
+
+  @staticmethod
+  def create(value, name: str):
+    value = support.get_value(value)
+    name = StringAttr.get(name)
+    return hw.NameOp(value, name)

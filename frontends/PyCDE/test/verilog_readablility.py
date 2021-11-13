@@ -1,6 +1,9 @@
-# RUN: %PYTHON% %s | FileCheck %s
+# RUN: %PYTHON% %s %t
+# RUN: FileCheck %s --input-file %t/WireNames.sv --check-prefix=OUTPUT
 
 from pycde import (Output, Input, module, generator, types, dim, System)
+
+import sys
 
 
 @module
@@ -23,26 +26,19 @@ class WireNames:
     })
 
 
-sys = System([WireNames])
-sys.generate()
-sys.run_passes()
-sys.print()
-# CHECK-LABEL:  hw.module @WireNames(%clk: i1, %data_in: !hw.array<3xi32>, %sel: i2) -> (a: i32, b: i32) {{.*}} {
-# CHECK:    %c1_i32 = hw.constant 1 : i32
-# CHECK:    %c2_i32 = hw.constant 2 : i32
-# CHECK:    %c3_i32 = hw.constant 3 : i32
-# CHECK:    %c4_i32 = hw.constant 4 : i32
-# CHECK:    %{{.+}} = hw.array_create %c4_i32, %c3_i32, %c2_i32, %c1_i32 : i32
-# CHECK:    %foo__reg1 = sv.reg  : !hw.inout<i32>
-# CHECK:    %foo__reg2 = sv.reg  : !hw.inout<i32>
-# CHECK:    %{{.+}} = sv.read_inout %foo__reg2 : !hw.inout<i32>
-# CHECK:    sv.alwaysff(posedge %clk)  {
-# CHECK:      %c0_i2 = hw.constant 0 : i2
-# CHECK:      %{{.+}} = hw.array_get %data_in[%c0_i2] {name = "foo"} : !hw.array<3xi32>
-# CHECK:      sv.passign %foo__reg1, %3 : i32
-# CHECK:      %{{.+}} = sv.read_inout %foo__reg1 : !hw.inout<i32>
-# CHECK:      sv.passign %foo__reg2, %4 : i32
-# CHECK:    }
-# CHECK:    %{{.+}} = hw.array_get %0[%sel] : !hw.array<4xi32>
-# CHECK:    hw.output %1, %2 : i32, i32
-# CHECK:  }
+wiresys = System([WireNames], output_directory=sys.argv[1])
+wiresys.generate()
+wiresys.run_passes()
+wiresys.print()
+wiresys.emit_outputs()
+
+# OUTPUT-LABEL: module WireNames
+# OUTPUT: reg [31:0] foo__reg1;
+# OUTPUT: reg [31:0] foo__reg2;
+# OUTPUT: wire [3:0][31:0] array_data = {{{{}}32'h4}, {32'h3}, {32'h2}, {32'h1}};
+# OUTPUT: always_ff @(posedge clk) begin
+# OUTPUT:   foo__reg1 <= data_in[2'h0];
+# OUTPUT:   foo__reg2 <= foo__reg1;
+# OUTPUT: end
+# OUTPUT: assign a = foo__reg2;
+# OUTPUT: assign b = array_data[sel];

@@ -38,37 +38,37 @@ class Value:
   def reg(self, clk, rst=None, name=None):
     if name is None:
       name = self.name
-    if name is not None:
-      m = Value._reg_name.match(name)
-      if m:
-        basename = m.group(1)
-        reg_num = m.group(2)
-        name = f"{basename}__reg{int(reg_num)+1}"
-      else:
-        name = name + "__reg1"
+      if name is not None:
+        m = Value._reg_name.match(name)
+        if m:
+          basename = m.group(1)
+          reg_num = m.group(2)
+          name = f"{basename}__reg{int(reg_num)+1}"
+        else:
+          name = name + "__reg1"
     with get_user_loc():
-      return Value.get(seq.reg(self.value, clock=clk, reset=rst, name=name))
+      ret = Value.get(seq.reg(self.value, clock=clk, reset=rst))
+      ret.name = name
+      return ret
 
   @property
   def name(self):
-    owner = self.value.owner
-    if hasattr(owner, "attributes") and "name" in owner.attributes:
-      return ir.StringAttr(owner.attributes["name"]).value
-    if isinstance(owner, ir.Block) and isinstance(owner.owner,
-                                                  msft.MSFTModuleOp):
-      mod = owner.owner
-      return ir.StringAttr(
-          ir.ArrayAttr(mod.attributes["argNames"])[self.value.arg_number]).value
     if hasattr(self, "_name"):
       return self._name
+    return None
 
   @name.setter
   def name(self, new: str):
+    assert not hasattr(self, "_name"), "Cannot rename value"
+    if new is None:
+      return
+
+    self._name = new
     owner = self.value.owner
-    if hasattr(owner, "attributes"):
+    if owner.name == "seq.compreg":
       owner.attributes["name"] = ir.StringAttr.get(new)
     else:
-      self._name = new
+      hw.NameOp.create(self.value, new)
 
 
 class RegularValue(Value):
