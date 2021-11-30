@@ -207,14 +207,13 @@ raw_ostream &operator<<(raw_ostream &os, const LatticeValue &lattice) {
 // This class defines the data structure associated with lattice values.
 // This means basically a pair of value and integer. The integer
 // represents the relative offset to the value on leaf level of type.
-
 class ValueAndLeafIndex {
 public:
   ValueAndLeafIndex(Value value, unsigned leafId, bool isKnownRoot = false)
       : valueAndFlag(value, isKnownRoot), leafId(leafId) {}
   ValueAndLeafIndex() = default;
   Value getValue() const { return valueAndFlag.getPointer(); }
-  unsigned getLeafId() const { return leafId; }
+  unsigned getLeafIndex() const { return leafId; }
 
   // isKnownRoot is true if we already know that the value is a root value.
   // If this flag is true, we can skip the translation.
@@ -230,7 +229,7 @@ private:
 };
 
 raw_ostream &operator<<(raw_ostream &os, const ValueAndLeafIndex &value) {
-  os << "<" << value.getValue() << ", index=" << value.getLeafId()
+  os << "<" << value.getValue() << ", index=" << value.getLeafIndex()
      << ", isKnownRoot=" << value.isKnownRoot() << ">";
   return os;
 }
@@ -251,13 +250,13 @@ struct DenseMapInfo<ValueAndLeafIndex> {
     assert(val.isKnownRoot() &&
            "All the values must be already known to be a root");
     return llvm::DenseMapInfo<std::pair<Value, unsigned>>::getHashValue(
-        {val.getValue(), val.getLeafId()});
+        {val.getValue(), val.getLeafIndex()});
   }
 
   static bool isEqual(const ValueAndLeafIndex &LHS,
                       const ValueAndLeafIndex &RHS) {
     return LHS.getValue() == RHS.getValue() &&
-           LHS.getLeafId() == RHS.getLeafId();
+           LHS.getLeafIndex() == RHS.getLeafIndex();
   }
 };
 
@@ -279,10 +278,10 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   // Value is regarded as overdefined if one of lattice values associated with
   // the value is overdefined.
   bool isOverdefined(Value value) const {
-    auto [root, start, size] =
+    auto [root, index, size] =
         getRootValueWithCorrespondingChildIndexRange(value);
     for (unsigned i = 0; i < size; i++) {
-      if (isOverdefined({root, start + i, true}))
+      if (isOverdefined({root, index + i, true}))
         return true;
     }
     return false;
@@ -304,10 +303,10 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   /// with some values if the value has a aggregate type so iterate over the
   /// corresponding range.
   void markOverdefined(Value value) {
-    auto [root, start, size] =
+    auto [root, index, size] =
         getRootValueWithCorrespondingChildIndexRange(value);
     for (unsigned int i = 0; i < size; i++)
-      markOverdefined({root, start + i, /*isKnownRoot=*/true});
+      markOverdefined({root, index + i, /*isKnownRoot=*/true});
   }
 
   /// Merge information from the 'from' lattice value into value.  If it
@@ -324,31 +323,31 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
 
   /// Merge two values.
   void mergeLatticeValue(Value value, Value source) {
-    auto [valueRoot, valueStart, valueSize] =
+    auto [valueRoot, valueIndex, valueSize] =
         getRootValueWithCorrespondingChildIndexRange(value);
-    auto [sourceRoot, sourceStart, sourceSize] =
+    auto [sourceRoot, sourceIndex, sourceSize] =
         getRootValueWithCorrespondingChildIndexRange(source);
     assert(valueSize == sourceSize && "range must match");
     for (unsigned i = 0; i < valueSize; i++)
-      mergeLatticeValue({valueRoot, valueStart + i, /*isKnownRoot=*/true},
-                        {sourceRoot, sourceStart + i, /*isKnownRoot=*/true});
+      mergeLatticeValue({valueRoot, valueIndex + i, /*isKnownRoot=*/true},
+                        {sourceRoot, sourceIndex + i, /*isKnownRoot=*/true});
   }
 
   void mergeLatticeValue(Value value, LatticeValue source) {
     // Don't even do a map lookup if from has no info in it.
     if (source.isUnknown())
       return;
-    auto [valueRoot, valueStart, valueSize] =
+    auto [valueRoot, valueIndex, valueSize] =
         getRootValueWithCorrespondingChildIndexRange(value);
     for (unsigned i = 0; i < valueSize; i++)
-      mergeLatticeValue({valueRoot, valueStart + i, /*isKnownRoot=*/true},
+      mergeLatticeValue({valueRoot, valueIndex + i, /*isKnownRoot=*/true},
                         source);
   }
 
   void mergeLatticeValue(ValueAndLeafIndex value, LatticeValue source) {
     LLVM_DEBUG({
       llvm::dbgs() << "Lattice Merge Values: \n<" << value.getValue()
-                   << ", index=" << value.getLeafId() << ">\n"
+                   << ", index=" << value.getLeafIndex() << ">\n"
                    << " <= <" << source << ">\n";
     });
 
@@ -358,7 +357,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     value = translateToRootIndex(value);
     LLVM_DEBUG({
       llvm::dbgs() << "Lattice Merge Values: \n<" << value.getValue()
-                   << ", index=" << value.getLeafId() << ">\n"
+                   << ", index=" << value.getLeafIndex() << ">\n"
                    << " <= <" << source << ">\n";
     });
     mergeLatticeValue(value, latticeValues[value], source);
@@ -367,9 +366,9 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void mergeLatticeValue(ValueAndLeafIndex result, ValueAndLeafIndex from) {
     LLVM_DEBUG({
       llvm::dbgs() << "Lattice Merge Values: \n<" << result.getValue()
-                   << ", index=" << result.getLeafId() << ">\n"
+                   << ", index=" << result.getLeafIndex() << ">\n"
                    << " <= <" << from.getValue()
-                   << ", index=" << from.getLeafId() << ">\n";
+                   << ", index=" << from.getLeafIndex() << ">\n";
     });
     // If 'from' hasn't been computed yet, then it is unknown, don't do
     // anything.
@@ -441,7 +440,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
 
     if (it != valueToRootValueAndLeafIndex.end()) {
       auto root = it->second;
-      return {root.getValue(), root.getLeafId() + valueAndLeafIndex.getLeafId(),
+      return {root.getValue(), root.getLeafIndex() + valueAndLeafIndex.getLeafIndex(),
               /*isKnownRoot=*/true};
     }
 
@@ -467,7 +466,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
       ValueAndLeafIndex valueAndLeafIndex) const {
     auto rootValueAndLeafIndex = translateToRootIndex(valueAndLeafIndex);
 
-    return {rootValueAndLeafIndex.getValue(), rootValueAndLeafIndex.getLeafId(),
+    return {rootValueAndLeafIndex.getValue(), rootValueAndLeafIndex.getLeafIndex(),
             getNumberOfLeafs(valueAndLeafIndex.getValue().getType())};
   }
 
@@ -605,13 +604,13 @@ void IMConstPropPass::runOnOperation() {
     auto changedValue = changedLatticeValueWorklist.pop_back_val();
     LLVM_DEBUG(llvm::dbgs()
                    << "Lattice Worklist pop: <" << changedValue.getValue()
-                   << ", index=" << changedValue.getLeafId()
+                   << ", index=" << changedValue.getLeafIndex()
                    << "> = " << latticeValues[changedValue] << "\n";);
 
     for (Operation *user : changedValue.getValue().getUsers()) {
       if (isBlockExecutable(user->getBlock())) {
         LLVM_DEBUG(llvm::dbgs() << "Dep direct<" << changedValue.getValue()
-                                << ", index=" << changedValue.getLeafId()
+                                << ", index=" << changedValue.getLeafIndex()
                                 << "> = " << *user << "\n";);
         visitOperation(user, changedValue);
       }
@@ -622,7 +621,7 @@ void IMConstPropPass::runOnOperation() {
       for (Operation *user : changedVal.getUsers()) {
         if (isBlockExecutable(user->getBlock())) {
           LLVM_DEBUG(llvm::dbgs() << "Dep indirect <" << changedValue.getValue()
-                                  << ", index=" << changedValue.getLeafId()
+                                  << ", index=" << changedValue.getLeafIndex()
                                   << "> = " << *user << "\n";);
           visitOperation(user, changedValue);
         }
@@ -750,7 +749,7 @@ void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
 
 void IMConstPropPass::visitRegResetOp(RegResetOp regReset,
                                       ValueAndLeafIndex changedValue) {
-  auto [srcRoot, srcStart, srcSize] =
+  auto [srcRoot, srcIndex, srcSize] =
       getRootValueWithCorrespondingChildIndexRange(regReset.resetValue());
 
   // If source is not changed value, we don't have to process this operation.
@@ -759,11 +758,11 @@ void IMConstPropPass::visitRegResetOp(RegResetOp regReset,
 
   // If chandedValue is not included in the range of the source value, just
   // skip.
-  if (srcStart > changedValue.getLeafId() ||
-      srcStart + srcSize <= changedValue.getLeafId())
+  if (srcIndex > changedValue.getLeafIndex() ||
+      srcIndex + srcSize <= changedValue.getLeafIndex())
     return;
 
-  unsigned index = changedValue.getLeafId() - srcStart;
+  unsigned index = changedValue.getLeafIndex() - srcIndex;
 
   auto &destTypes = getLeafGroundTypes(regReset.getType());
   auto srcValue = getExtendedLatticeValue({regReset.resetValue(), index},
@@ -787,7 +786,7 @@ void IMConstPropPass::markSubindexOp(SubindexOp subindex) {
   valueToRootValueAndLeafIndex[subindex] = rootAndIndex;
 
   for (unsigned i = 0; i < getNumberOfLeafs(subindex.getType()); i++)
-    rootToChildrenAccess[{rootAndIndex.getValue(), rootAndIndex.getLeafId() + i,
+    rootToChildrenAccess[{rootAndIndex.getValue(), rootAndIndex.getLeafIndex() + i,
                           /*isKnownRoot=*/true}]
         .push_back(subindex);
 }
@@ -802,7 +801,7 @@ void IMConstPropPass::markSubfieldOp(SubfieldOp subfield) {
   valueToRootValueAndLeafIndex[subfield] = rootAndIndex;
 
   for (unsigned i = 0; i < getNumberOfLeafs(subfield.getType()); i++)
-    rootToChildrenAccess[{rootAndIndex.getValue(), rootAndIndex.getLeafId() + i,
+    rootToChildrenAccess[{rootAndIndex.getValue(), rootAndIndex.getLeafIndex() + i,
                           /*isKnownRoot=*/true}]
         .push_back(subfield);
 }
@@ -892,7 +891,7 @@ void IMConstPropPass::visitConnect(ConnectOp connect,
     return;
   }
 
-  auto [srcRoot, srcStart, srcSize] =
+  auto [srcRoot, srcIndex, srcSize] =
       getRootValueWithCorrespondingChildIndexRange(connect.src());
   // If source is not changed value, we don't have to process this operation.
   if (srcRoot != changedValue.getValue())
@@ -900,11 +899,11 @@ void IMConstPropPass::visitConnect(ConnectOp connect,
 
   // If chandedValue is not included in the range of the source value, just
   // skip.
-  if (srcStart > changedValue.getLeafId() ||
-      srcStart + srcSize <= changedValue.getLeafId())
+  if (srcIndex > changedValue.getLeafIndex() ||
+      srcIndex + srcSize <= changedValue.getLeafIndex())
     return;
 
-  unsigned index = changedValue.getLeafId() - srcStart;
+  unsigned index = changedValue.getLeafIndex() - srcIndex;
 
   // Handle implicit extensions.
   auto srcValue = getExtendedLatticeValue(changedValue, destType);
