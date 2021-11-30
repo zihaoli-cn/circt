@@ -246,10 +246,10 @@ struct DenseMapInfo<ValueAndLeafIndex> {
         {val.getValue(), val.getLeafIndex()});
   }
 
-  static bool isEqual(const ValueAndLeafIndex &LHS,
-                      const ValueAndLeafIndex &RHS) {
-    return LHS.getValue() == RHS.getValue() &&
-           LHS.getLeafIndex() == RHS.getLeafIndex();
+  static bool isEqual(const ValueAndLeafIndex &lhs,
+                      const ValueAndLeafIndex &rhs) {
+    return lhs.getValue() == rhs.getValue() &&
+           lhs.getLeafIndex() == rhs.getLeafIndex();
   }
 };
 } // namespace llvm
