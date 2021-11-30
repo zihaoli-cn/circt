@@ -440,7 +440,8 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
 
     if (it != valueToRootValueAndLeafIndex.end()) {
       auto root = it->second;
-      return {root.getValue(), root.getLeafIndex() + valueAndLeafIndex.getLeafIndex(),
+      return {root.getValue(),
+              root.getLeafIndex() + valueAndLeafIndex.getLeafIndex(),
               /*isKnownRoot=*/true};
     }
 
@@ -466,7 +467,8 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
       ValueAndLeafIndex valueAndLeafIndex) const {
     auto rootValueAndLeafIndex = translateToRootIndex(valueAndLeafIndex);
 
-    return {rootValueAndLeafIndex.getValue(), rootValueAndLeafIndex.getLeafIndex(),
+    return {rootValueAndLeafIndex.getValue(),
+            rootValueAndLeafIndex.getLeafIndex(),
             getNumberOfLeafs(valueAndLeafIndex.getValue().getType())};
   }
 
@@ -786,7 +788,8 @@ void IMConstPropPass::markSubindexOp(SubindexOp subindex) {
   valueToRootValueAndLeafIndex[subindex] = rootAndIndex;
 
   for (unsigned i = 0; i < getNumberOfLeafs(subindex.getType()); i++)
-    rootToChildrenAccess[{rootAndIndex.getValue(), rootAndIndex.getLeafIndex() + i,
+    rootToChildrenAccess[{rootAndIndex.getValue(),
+                          rootAndIndex.getLeafIndex() + i,
                           /*isKnownRoot=*/true}]
         .push_back(subindex);
 }
@@ -801,7 +804,8 @@ void IMConstPropPass::markSubfieldOp(SubfieldOp subfield) {
   valueToRootValueAndLeafIndex[subfield] = rootAndIndex;
 
   for (unsigned i = 0; i < getNumberOfLeafs(subfield.getType()); i++)
-    rootToChildrenAccess[{rootAndIndex.getValue(), rootAndIndex.getLeafIndex() + i,
+    rootToChildrenAccess[{rootAndIndex.getValue(),
+                          rootAndIndex.getLeafIndex() + i,
                           /*isKnownRoot=*/true}]
         .push_back(subfield);
 }
