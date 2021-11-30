@@ -202,8 +202,6 @@ raw_ostream &operator<<(raw_ostream &os, const LatticeValue &lattice) {
   return os;
 }
 
-} // end anonymous namespace
-
 // This class defines the data structure associated with lattice values.
 // This means basically a pair of value and integer. The integer
 // represents the relative offset to the value on leaf level of type.
@@ -220,20 +218,15 @@ public:
   bool isKnownRoot() const { return valueAndFlag.getInt(); }
   void setKnownRoot() { valueAndFlag.setInt(true); }
 
-  friend raw_ostream &operator<<(raw_ostream &os, const ValueAndLeafIndex &dt);
-
 private:
   // Pair of a value and flag.
   llvm::PointerIntPair<Value, 1, bool> valueAndFlag{};
   unsigned leafId{};
 };
 
-raw_ostream &operator<<(raw_ostream &os, const ValueAndLeafIndex &value) {
-  os << "<" << value.getValue() << ", index=" << value.getLeafIndex()
-     << ", isKnownRoot=" << value.isKnownRoot() << ">";
-  return os;
-}
+} // end anonymous namespace
 
+namespace llvm {
 template <>
 struct DenseMapInfo<ValueAndLeafIndex> {
   static inline ValueAndLeafIndex getEmptyKey() {
@@ -259,6 +252,7 @@ struct DenseMapInfo<ValueAndLeafIndex> {
            LHS.getLeafIndex() == RHS.getLeafIndex();
   }
 };
+} // namespace llvm
 
 namespace {
 struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
