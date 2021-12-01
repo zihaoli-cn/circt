@@ -707,8 +707,7 @@ void IMConstPropPass::markBlockExecutable(Block *block) {
 }
 
 void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
-  // If the wire/reg has a non-ground type, then it is too complex for us
-  // to handle, mark it as overdefined.
+
   auto resultValue = wireOrReg->getResult(0);
   if (!isTrackableType(resultValue.getType()))
     return markOverdefined(resultValue);
