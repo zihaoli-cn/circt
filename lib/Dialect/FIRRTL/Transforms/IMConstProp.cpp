@@ -29,9 +29,10 @@ static bool isWireOrReg(Operation *op) {
 
 /// Return true if this is a subelement access.
 static bool isSubelementAccess(Operation *op) {
-  return isa<SubfieldOp, SubindexOp>(op);
+  return isa_and_nonnull<SubindexOp, SubindexOp>(op);
 }
 
+/// Return true if this is a root value.
 static bool isRoot(Operation *op) { return !isSubelementAccess(op); }
 
 /// Return true if this is a wire, register or subelement access we're allowed
@@ -213,21 +214,22 @@ raw_ostream &operator<<(raw_ostream &os, const LatticeValue &lattice) {
 // represents the relative offset to the value on leaf level of type.
 class ValueAndLeafIndex {
 public:
-  ValueAndLeafIndex(Value value, unsigned leafId, bool isKnownRoot = false)
-      : valueAndFlag(value, isKnownRoot), leafId(leafId) {}
+  ValueAndLeafIndex(Value value, unsigned leafId)
+      : valueAndFlag(value, ::isRoot(value.getDefiningOp())), leafId(leafId) {}
+
+  ValueAndLeafIndex(llvm::PointerIntPair<Value, 1, bool> valueAndFlag,
+                    unsigned leafId)
+      : valueAndFlag(valueAndFlag), leafId(leafId) {}
   ValueAndLeafIndex() = default;
+
   Value getValue() const { return valueAndFlag.getPointer(); }
   unsigned getLeafIndex() const { return leafId; }
-
-  // isKnownRoot is true if we already know that the value is a root value.
-  // If this flag is true, we can skip the translation.
-  bool isKnownRoot() const { return valueAndFlag.getInt(); }
-  void setKnownRoot() { valueAndFlag.setInt(true); }
+  bool isRoot() const { return valueAndFlag.getInt(); }
 
 private:
   // Pair of a value and flag.
-  llvm::PointerIntPair<Value, 1, bool> valueAndFlag{};
-  unsigned leafId{};
+  llvm::PointerIntPair<Value, 1, bool> valueAndFlag;
+  unsigned leafId = 0;
 };
 
 } // end anonymous namespace
@@ -236,25 +238,24 @@ namespace llvm {
 template <>
 struct DenseMapInfo<ValueAndLeafIndex> {
   static inline ValueAndLeafIndex getEmptyKey() {
-    // We don't care `isKnownRoot` here because keys must be root.
-    return {llvm::DenseMapInfo<Value>::getEmptyKey(),
-            llvm::DenseMapInfo<unsigned>::getEmptyKey()};
+    return {
+        llvm::DenseMapInfo<llvm::PointerIntPair<Value, 1, bool>>::getEmptyKey(),
+        llvm::DenseMapInfo<unsigned>::getEmptyKey()};
   }
   static inline ValueAndLeafIndex getTombstoneKey() {
-    // We don't care `isKnownRoot` here because keys must be root.
-    return {llvm::DenseMapInfo<Value>::getTombstoneKey(),
+    return {llvm::DenseMapInfo<
+                llvm::PointerIntPair<Value, 1, bool>>::getTombstoneKey(),
             llvm::DenseMapInfo<unsigned>::getTombstoneKey()};
   }
   static unsigned getHashValue(ValueAndLeafIndex val) {
-    assert(val.isKnownRoot() &&
-           "All the values must be already known to be a root");
-    return llvm::DenseMapInfo<std::pair<Value, unsigned>>::getHashValue(
-        {val.getValue(), val.getLeafIndex()});
+    return llvm::DenseMapInfo<
+        std::pair<llvm::PointerIntPair<Value, 1, bool>, unsigned>>::
+        getHashValue({{val.getValue(), val.isRoot()}, val.getLeafIndex()});
   }
 
   static bool isEqual(const ValueAndLeafIndex &lhs,
                       const ValueAndLeafIndex &rhs) {
-    return lhs.getValue() == rhs.getValue() &&
+    return lhs.getValue() == rhs.getValue() && lhs.isRoot() == rhs.isRoot() &&
            lhs.getLeafIndex() == rhs.getLeafIndex();
   }
 };
@@ -280,10 +281,9 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   bool isOverdefined(Value value) const {
     auto [root, index, size] =
         getRootValueWithCorrespondingChildIndexRange(value);
-    for (unsigned i = 0; i < size; i++) {
-      if (isOverdefined({root, index + i, true}))
+    for (unsigned i = 0; i < size; ++i)
+      if (isOverdefined({root, index + i}))
         return true;
-    }
     return false;
   }
 
@@ -305,8 +305,8 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void markOverdefined(Value value) {
     auto [root, index, size] =
         getRootValueWithCorrespondingChildIndexRange(value);
-    for (unsigned int i = 0; i < size; i++)
-      markOverdefined({root, index + i, /*isKnownRoot=*/true});
+    for (unsigned int i = 0; i < size; ++i)
+      markOverdefined({root, index + i});
   }
 
   /// Merge information from the 'from' lattice value into value.  If it
@@ -314,7 +314,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   /// revisitation.
   void mergeLatticeValue(ValueAndLeafIndex value, LatticeValue &valueEntry,
                          LatticeValue source) {
-    assert(value.isKnownRoot() && "value must be known to be root beforehand");
+    assert(value.isRoot() && "value must be known to be root beforehand");
     if (!source.isOverdefined() && hasDontTouch(value.getValue()))
       source = LatticeValue::getOverdefined();
     if (valueEntry.mergeIn(source))
@@ -328,9 +328,9 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     auto [sourceRoot, sourceIndex, sourceSize] =
         getRootValueWithCorrespondingChildIndexRange(source);
     assert(valueSize == sourceSize && "range must match");
-    for (unsigned i = 0; i < valueSize; i++)
-      mergeLatticeValue({valueRoot, valueIndex + i, /*isKnownRoot=*/true},
-                        {sourceRoot, sourceIndex + i, /*isKnownRoot=*/true});
+    for (unsigned i = 0; i < valueSize; ++i)
+      mergeLatticeValue({valueRoot, valueIndex + i},
+                        {sourceRoot, sourceIndex + i});
   }
 
   void mergeLatticeValue(Value value, LatticeValue source) {
@@ -339,9 +339,8 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
       return;
     auto [valueRoot, valueIndex, valueSize] =
         getRootValueWithCorrespondingChildIndexRange(value);
-    for (unsigned i = 0; i < valueSize; i++)
-      mergeLatticeValue({valueRoot, valueIndex + i, /*isKnownRoot=*/true},
-                        source);
+    for (unsigned i = 0; i < valueSize; ++i)
+      mergeLatticeValue({valueRoot, valueIndex + i}, source);
   }
 
   void mergeLatticeValue(ValueAndLeafIndex value, LatticeValue source) {
@@ -434,20 +433,15 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   ValueAndLeafIndex
   translateToRootIndex(ValueAndLeafIndex valueAndLeafIndex) const {
     // If the value is already known to be root, just return.
-    if (valueAndLeafIndex.isKnownRoot())
+    if (valueAndLeafIndex.isRoot())
       return valueAndLeafIndex;
+
     auto it = valueToRootValueAndLeafIndex.find(valueAndLeafIndex.getValue());
-
-    if (it != valueToRootValueAndLeafIndex.end()) {
-      auto root = it->second;
-      return {root.getValue(),
-              root.getLeafIndex() + valueAndLeafIndex.getLeafIndex(),
-              /*isKnownRoot=*/true};
-    }
-
-    // If the value is not registered, it must be root then just return.
-    valueAndLeafIndex.setKnownRoot();
-    return valueAndLeafIndex;
+    assert(it != valueToRootValueAndLeafIndex.end() &&
+           "If the value is not a root, it must be registered before");
+    auto root = it->second;
+    return {root.getValue(),
+            root.getLeafIndex() + valueAndLeafIndex.getLeafIndex()};
   }
 
   ValueAndLeafIndex translateToRootIndex(Value value) const {
@@ -723,10 +717,9 @@ void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
   // Otherwise, this starts out as InvalidValue and is upgraded by
   // connects.
   auto &destTypes = getLeafGroundTypes(resultValue.getType());
-  for (unsigned i = 0, e = destTypes.size(); i < e; i++) {
+  for (unsigned i = 0, e = destTypes.size(); i < e; ++i) {
     auto destType = destTypes[i].cast<FIRRTLType>();
-    mergeLatticeValue({resultValue, i, /*isKnownRoot=*/true},
-                      InvalidValueAttr::get(destType));
+    mergeLatticeValue({resultValue, i}, InvalidValueAttr::get(destType));
   }
 }
 
@@ -740,12 +733,12 @@ void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
   auto &destTypes = getLeafGroundTypes(regReset.getType());
 
   // Iterate over each ground type and merge lattice values separatetly.
-  for (unsigned i = 0, e = destTypes.size(); i < e; i++) {
+  for (unsigned i = 0, e = destTypes.size(); i < e; ++i) {
     auto destType = destTypes[i].cast<FIRRTLType>();
     auto srcValue =
         getExtendedLatticeValue({regReset.resetValue(), i}, destType,
                                 /*allowTruncation=*/true);
-    mergeLatticeValue({regReset, i, /*isKnownRoot=*/true}, srcValue);
+    mergeLatticeValue({regReset, i}, srcValue);
   }
 }
 
@@ -770,7 +763,7 @@ void IMConstPropPass::visitRegResetOp(RegResetOp regReset,
   auto srcValue = getExtendedLatticeValue({regReset.resetValue(), index},
                                           destTypes[index].cast<FIRRTLType>(),
                                           /*allowTruncation=*/true);
-  mergeLatticeValue({regReset, index, /*isKnownRoot=*/true}, srcValue);
+  mergeLatticeValue({regReset, index}, srcValue);
 }
 
 void IMConstPropPass::markMemOp(MemOp mem) {
@@ -778,51 +771,32 @@ void IMConstPropPass::markMemOp(MemOp mem) {
     markOverdefined(result);
 }
 
-void IMConstPropPass::markSubindexOp(SubindexOp subindex) {
-  auto offset =
-      getChildIndexOffset(subindex.input().getType(), subindex.index());
+void IMConstPropPass::markSubelementAccessOp(Operation *subelementAccess,
+                                             unsigned index) {
+  auto input = subelementAccess->getOperand(0);
+  auto result = subelementAccess->getResult(0);
+  auto offset = getChildIndexOffset(input.getType(), index);
 
-  auto rootAndIndex = translateToRootIndex({subindex.input(), offset});
-
-  // Register the current position to `valueToRootValueAndLeafIndex`.
-  valueToRootValueAndLeafIndex[subindex] = rootAndIndex;
-
-  for (unsigned i = 0; i < getNumberOfLeafs(subindex.getType()); i++)
-    rootToChildrenAccess[{rootAndIndex.getValue(),
-                          rootAndIndex.getLeafIndex() + i,
-                          /*isKnownRoot=*/true}]
-        .push_back(subindex);
-}
-
-void IMConstPropPass::markSubfieldOp(SubfieldOp subfield) {
-  auto offset =
-      getChildIndexOffset(subfield.input().getType(), subfield.fieldIndex());
-
-  auto rootAndIndex = translateToRootIndex({subfield.input(), offset});
+  auto rootAndIndex = translateToRootIndex({input, offset});
 
   // Register the current position to `valueToRootValueAndLeafIndex`.
-  valueToRootValueAndLeafIndex[subfield] = rootAndIndex;
-
-  for (unsigned i = 0; i < getNumberOfLeafs(subfield.getType()); i++)
-    rootToChildrenAccess[{rootAndIndex.getValue(),
-                          rootAndIndex.getLeafIndex() + i,
-                          /*isKnownRoot=*/true}]
-        .push_back(subfield);
+  valueToRootValueAndLeafIndex[result] = rootAndIndex;
+  for (unsigned i = 0, e = getNumberOfLeafs(input.getType()); i < e; ++i)
+    rootToChildrenSubelementAccess[{rootAndIndex.getValue(),
+                                    rootAndIndex.getLeafIndex() + i}]
+        .push_back(result);
 }
 
 void IMConstPropPass::markConstantOp(ConstantOp constant) {
-  mergeLatticeValue({constant, 0, /*isKnownRoot=*/true},
-                    LatticeValue(constant.valueAttr()));
+  mergeLatticeValue(constant, LatticeValue(constant.valueAttr()));
 }
 
 void IMConstPropPass::markSpecialConstantOp(SpecialConstantOp specialConstant) {
-  mergeLatticeValue({specialConstant, 0, /*isKnownRoot=*/true},
-                    LatticeValue(specialConstant.valueAttr()));
+  mergeLatticeValue(specialConstant, LatticeValue(specialConstant.valueAttr()));
 }
 
 void IMConstPropPass::markInvalidValueOp(InvalidValueOp invalid) {
-  mergeLatticeValue({invalid, 0, /*isKnownRoot=*/true},
-                    InvalidValueAttr::get(invalid.getType()));
+  mergeLatticeValue(invalid, InvalidValueAttr::get(invalid.getType()));
 }
 
 /// Instances have no operands, so they are visited exactly once when their
@@ -919,8 +893,7 @@ void IMConstPropPass::visitConnect(ConnectOp connect,
   if (auto blockArg = connect.dest().dyn_cast<BlockArgument>()) {
     if (!AnnotationSet::get(blockArg).hasDontTouch())
       for (auto userOfResultPort : resultPortToInstanceResultMapping[blockArg])
-        mergeLatticeValue({userOfResultPort, index, /*isKnownRoot=*/true},
-                          srcValue);
+        mergeLatticeValue({userOfResultPort, index}, srcValue);
     // Output ports are wire-like and may have users.
     mergeLatticeValue({connect.dest(), index}, srcValue);
     return;
@@ -1069,14 +1042,13 @@ void IMConstPropPass::visitOperation(Operation *op,
       else // Treat non integer constants as overdefined.
         resultLattice = LatticeValue::getOverdefined();
     } else { // Folding to an operand results in its value.
-      resultLattice =
-          latticeValues[{foldResult.get<Value>(), 0, /*isKnownRoot=*/true}];
+      resultLattice = latticeValues[{foldResult.get<Value>(), 0}];
     }
 
     // We do not "merge" the lattice value in, we set it.  This is because the
     // fold functions can produce different values over time, e.g. in the
     // presence of InvalidValue operands that get resolved to other constants.
-    setLatticeValue({op->getResult(i), 0, /*isKnownRoot=*/true}, resultLattice);
+    setLatticeValue({op->getResult(i), 0}, resultLattice);
   }
 }
 
@@ -1094,7 +1066,8 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
     // TODO: We don't allow to replace non-ground type values for now.
     if (!value.getType().cast<FIRRTLType>().isGround())
       return false;
-    auto it = latticeValues.find({value, 0, /*isKnownRoot=*/true});
+
+    auto it = latticeValues.find({value, 0});
     if (it == latticeValues.end() || it->second.isOverdefined() ||
         it->second.isUnknown())
       return false;
