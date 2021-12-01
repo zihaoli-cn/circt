@@ -544,7 +544,8 @@ private:
 
   /// An inverse map of `valueToRootValueAndLeafIndex` to visit all the users of
   /// children.
-  DenseMap<ValueAndLeafIndex, SmallVector<Value, 4>> rootToChildrenAccess;
+  DenseMap<ValueAndLeafIndex, SmallVector<Value, 4>>
+      rootToChildrenSubelementAccess;
 
   /// A map from a bundle type to its offsets of index.
   DenseMap<Type, SmallVector<unsigned, 4>> typeToChildIndexOffset;
@@ -610,7 +611,7 @@ void IMConstPropPass::runOnOperation() {
       }
     }
 
-    auto changedValueAll = rootToChildrenAccess[changedValue];
+    auto changedValueAll = rootToChildrenSubelementAccess[changedValue];
     for (auto changedVal : changedValueAll)
       for (Operation *user : changedVal.getUsers()) {
         if (isBlockExecutable(user->getBlock())) {
