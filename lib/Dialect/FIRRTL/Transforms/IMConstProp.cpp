@@ -411,8 +411,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void markRegResetOp(RegResetOp regReset);
   void markRegOp(RegOp reg);
   void markMemOp(MemOp mem);
-  void markSubindexOp(SubindexOp subindex);
-  void markSubfieldOp(SubfieldOp subfield);
+  void markSubelementAccessOp(Operation *op, unsigned index);
   void markInvalidValueOp(InvalidValueOp invalid);
   void markConstantOp(ConstantOp constant);
   void markSpecialConstantOp(SpecialConstantOp specialConstant);
@@ -424,8 +423,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void visitPartialConnect(PartialConnectOp connect,
                            ValueAndLeafIndex changedValue);
   void visitRegResetOp(RegResetOp connect, ValueAndLeafIndex changedValue);
-  void visitSubindex(SubindexOp op);
-  void visitSubfield(SubfieldOp op);
+  void visitSubelementAccess(Operation *op);
   void visitOperation(Operation *op, ValueAndLeafIndex changedValue);
 
   /// Translate the given value and leaf index into the root and leaf
@@ -701,9 +699,9 @@ void IMConstPropPass::markBlockExecutable(Block *block) {
     else if (auto mem = dyn_cast<MemOp>(op))
       markMemOp(mem);
     else if (auto subindex = dyn_cast<SubindexOp>(op))
-      markSubindexOp(subindex);
+      markSubelementAccessOp(subindex, subindex.index());
     else if (auto subfield = dyn_cast<SubfieldOp>(op))
-      markSubfieldOp(subfield);
+      markSubelementAccessOp(subfield, subfield.fieldIndex());
   }
 }
 
@@ -941,12 +939,7 @@ void IMConstPropPass::visitPartialConnect(PartialConnectOp partialConnect,
   partialConnect.emitError("IMConstProp cannot handle partial connect");
 }
 
-void IMConstPropPass::visitSubindex(SubindexOp subindex) {
-  // We can just skip subindex op because lattice values are shared.
-  return;
-}
-
-void IMConstPropPass::visitSubfield(SubfieldOp subindex) {
+void IMConstPropPass::visitSubelementAccess(Operation *) {
   // We can just skip subfield op because lattice values are shared.
   return;
 }
@@ -966,10 +959,8 @@ void IMConstPropPass::visitOperation(Operation *op,
     return visitPartialConnect(partialConnectOp, changedValue);
   if (auto regResetOp = dyn_cast<RegResetOp>(op))
     return visitRegResetOp(regResetOp, changedValue);
-  if (auto subindexOp = dyn_cast<SubindexOp>(op))
-    return visitSubindex(subindexOp);
-  if (auto subfield = dyn_cast<SubfieldOp>(op))
-    return visitSubfield(subfield);
+  if (isa<SubindexOp, SubfieldOp>(op))
+    return visitSubelementAccess(op);
 
   // The clock operand of regop changing doesn't change its result value.
   if (isa<RegOp>(op))
