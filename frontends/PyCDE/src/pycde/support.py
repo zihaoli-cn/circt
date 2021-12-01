@@ -6,7 +6,7 @@ import os
 
 
 # PyCDE needs a custom version of this to support python classes.
-def var_to_attribute(obj) -> ir.Attribute:
+def _obj_to_attribute(obj) -> ir.Attribute:
   """Create an MLIR attribute from a Python object for a few common cases."""
   if obj is None:
     return ir.BoolAttr.get(False)
@@ -22,15 +22,15 @@ def var_to_attribute(obj) -> ir.Attribute:
   if isinstance(obj, str):
     return ir.StringAttr.get(obj)
   if isinstance(obj, list) or isinstance(obj, tuple):
-    arr = [var_to_attribute(x) for x in obj]
+    arr = [_obj_to_attribute(x) for x in obj]
     if all(arr):
       return ir.ArrayAttr.get(arr)
   if isinstance(obj, dict):
-    attrs = {name: var_to_attribute(value) for name, value in obj.items()}
+    attrs = {name: _obj_to_attribute(value) for name, value in obj.items()}
     return ir.DictAttr.get(attrs)
   if hasattr(obj, "__dict__"):
     attrs = {
-        name: var_to_attribute(value) for name, value in obj.__dict__.items()
+        name: _obj_to_attribute(value) for name, value in obj.__dict__.items()
     }
     return ir.DictAttr.get(attrs)
   raise TypeError(f"Cannot convert type '{type(obj)}' to MLIR attribute. "
