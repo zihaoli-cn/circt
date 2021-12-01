@@ -9,13 +9,10 @@
 #include "PassDetails.h"
 #include "circt/Dialect/FIRRTL/FIRRTLAnnotations.h"
 #include "circt/Dialect/FIRRTL/FIRRTLAttributes.h"
-#include "circt/Dialect/FIRRTL/FIRRTLTypes.h"
 #include "circt/Dialect/FIRRTL/InstanceGraph.h"
 #include "circt/Dialect/FIRRTL/Passes.h"
-#include "circt/Support/LLVM.h"
 #include "mlir/IR/Threading.h"
 #include "llvm/ADT/APSInt.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
@@ -25,15 +22,22 @@
 using namespace circt;
 using namespace firrtl;
 
-/// Return true if this is either wire, register or similar(subfield and
-/// subindex).
+/// Return true if this is wire or register.
 static bool isWireOrReg(Operation *op) {
-  return isa<WireOp, RegResetOp, RegOp, SubfieldOp, SubindexOp>(op);
+  return isa<WireOp>(op) || isa<RegResetOp>(op) || isa<RegOp>(op);
 }
 
-/// Return true if this is a wire or register we're allowed to delete.
-static bool isDeletableWireOrReg(Operation *op) {
-  return isWireOrReg(op) && !hasDontTouch(op);
+/// Return true if this is a subelement access.
+static bool isSubelementAccess(Operation *op) {
+  return isa<SubfieldOp, SubindexOp>(op);
+}
+
+static bool isRoot(Operation *op) { return !isSubelementAccess(op); }
+
+/// Return true if this is a wire, register or subelement access we're allowed
+/// to delete.
+static bool isDeletableWireOrRegOrSubelementAccess(Operation *op) {
+  return (isWireOrReg(op) || isSubelementAccess(op)) && !hasDontTouch(op);
 }
 
 /// Return true if a type is possible to track. Currently, we allow passive
@@ -1124,7 +1128,8 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
     // Connects to values that we found to be constant can be dropped.
     if (auto connect = dyn_cast<ConnectOp>(op)) {
       if (auto *destOp = connect.dest().getDefiningOp()) {
-        if (isDeletableWireOrReg(destOp) && !isOverdefined(connect.dest())) {
+        if (isDeletableWireOrRegOrSubelementAccess(destOp) &&
+            !isOverdefined(connect.dest())) {
           connect.erase();
           ++numErasedOp;
         }
@@ -1138,8 +1143,8 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
       continue;
 
     // If this operation is already dead, then go ahead and remove it.
-    if (op.use_empty() &&
-        (wouldOpBeTriviallyDead(&op) || isDeletableWireOrReg(&op))) {
+    if (op.use_empty() && (wouldOpBeTriviallyDead(&op) ||
+                           isDeletableWireOrRegOrSubelementAccess(&op))) {
       op.erase();
       continue;
     }
@@ -1159,7 +1164,8 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
 
     // If the operation folded to a constant then we can probably nuke it.
     if (foldedAny && op.use_empty() &&
-        (wouldOpBeTriviallyDead(&op) || isDeletableWireOrReg(&op))) {
+        (wouldOpBeTriviallyDead(&op) ||
+         isDeletableWireOrRegOrSubelementAccess(&op))) {
       op.erase();
       ++numErasedOp;
       continue;
