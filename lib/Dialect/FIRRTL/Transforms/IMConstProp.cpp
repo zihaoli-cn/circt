@@ -22,7 +22,7 @@
 using namespace circt;
 using namespace firrtl;
 
-/// Return true if this is wire or register.
+/// Return true if this is a wire or register.
 static bool isWireOrReg(Operation *op) {
   return isa<WireOp>(op) || isa<RegResetOp>(op) || isa<RegOp>(op);
 }
@@ -47,7 +47,7 @@ static bool isTrackableType(Type type) {
   return type.cast<FIRRTLType>().isPassive();
 }
 
-/// This function recursively apply `fn` to leaf ground types of `type`.
+/// This function recursively applies `fn` to leaf ground types of `type`.
 static void
 foreachFIRRTLGroundType(FIRRTLType type,
                         llvm::unique_function<void(FIRRTLType)> fn) {
@@ -722,8 +722,6 @@ void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
 }
 
 void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
-  // If the reg has a passive type, then it is too complex for us to
-  // handle, mark it as overdefined.
   if (!isTrackableType(regReset.getType()))
     return markOverdefined(regReset);
 
@@ -940,7 +938,7 @@ void IMConstPropPass::visitPartialConnect(PartialConnectOp partialConnect,
 }
 
 void IMConstPropPass::visitSubelementAccess(Operation *) {
-  // We can just skip subfield op because lattice values are shared.
+  // We can just skip subelement access op because lattice values are shared.
   return;
 }
 
