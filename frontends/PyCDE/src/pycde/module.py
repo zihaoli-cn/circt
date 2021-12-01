@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Tuple, Union, Dict
 import typing
 
-from pycde.support import obj_to_value
+from pycde.support import _obj_to_value
 
 from .pycde_types import types
 from .support import (get_user_loc, var_to_attribute, OpOperandConnect,
@@ -361,7 +361,7 @@ def _module_base(cls, extern_name: str, params={}):
             else:
               value = create_const_zero(type)
           else:
-            value = obj_to_value(input, type)
+            value = _obj_to_value(input, type)
         else:
           backedge = BackedgeBuilder.current().create(type,
                                                       name,
@@ -524,7 +524,7 @@ class _GeneratorPortAccess:
     output_port = self._mod.output_ports[self._mod.output_port_lookup[name]]
     output_port_type = output_port[1]
     if not isinstance(value, Value):
-      value = obj_to_value(value, output_port_type)
+      value = _obj_to_value(value, output_port_type)
     if value.type != output_port_type:
       raise ValueError("Types do not match. Output port type: "
                        f" '{output_port_type}'. Value type: '{value.type}'")
