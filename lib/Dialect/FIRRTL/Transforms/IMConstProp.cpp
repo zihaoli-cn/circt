@@ -47,8 +47,9 @@ static bool isTrackableType(Type type) {
 }
 
 /// This function recursively apply `fn` to leaf ground types of `type`.
-static void traverseFIRRTLType(Type type,
-                               llvm::unique_function<void(FIRRTLType)> fn) {
+static void
+foreachFIRRTLGroundType(FIRRTLType type,
+                        llvm::unique_function<void(FIRRTLType)> fn) {
   std::function<void(FIRRTLType)> recurse = [&](FIRRTLType type) {
     TypeSwitch<FIRRTLType>(type)
         .Case<BundleType>([&](BundleType bundle) {
@@ -59,12 +60,13 @@ static void traverseFIRRTLType(Type type,
           for (size_t i = 0, e = vector.getNumElements(); i < e; ++i)
             recurse(vector.getElementType());
         })
-        .Default([&](auto op) {
-          assert(op.isGround() && "only ground types are expected here");
-          fn(type.cast<FIRRTLType>());
+        .Default([&](auto groundType) {
+          assert(groundType.template cast<FIRRTLType>().isGround() &&
+                 "only ground types are expected here");
+          fn(groundType.template cast<FIRRTLType>());
         });
   };
-  recurse(type.cast<FIRRTLType>());
+  recurse(type);
 }
 
 //===----------------------------------------------------------------------===//
@@ -530,8 +532,8 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     auto &entry = typeToLeafGroundTypes[type];
     if (!entry.empty())
       return entry;
-    auto fn = [&entry](Type type) { entry.push_back(type); };
-    traverseFIRRTLType(type, fn);
+    auto fn = [&entry](FIRRTLType type) { entry.push_back(type); };
+    foreachFIRRTLGroundType(type.cast<FIRRTLType>(), fn);
     return entry;
   }
 
