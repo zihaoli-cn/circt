@@ -854,12 +854,9 @@ void IMConstPropPass::markInstanceOp(InstanceOp instance) {
     // get handled when any connects to it are processed.
     if (fModule.getPortDirection(resultNo) == Direction::In)
       continue;
-    // We only support simple values so far.
-    if (!instancePortVal.getType().cast<FIRRTLType>().isGround()) {
-      // TODO: Add field sensitivity.
-      markOverdefined(instancePortVal);
+
+    if (!isTrackableType(instancePortVal.getType()))
       continue;
-    }
 
     // Otherwise we have a result from the instance.  We need to forward results
     // from the body to this instance result's SSA value, so remember it.
@@ -873,7 +870,8 @@ void IMConstPropPass::markInstanceOp(InstanceOp instance) {
 
     // If there is already a value known for modulePortVal make sure to forward
     // it here.
-    mergeLatticeValue(instancePortVal, modulePortVal);
+    for (unsigned i = 0, e = getNumberOfLeafs(instancePortVal.getType()); i < e; ++i)
+      mergeLatticeValue({instancePortVal, i}, {modulePortVal, i});
   }
 }
 
