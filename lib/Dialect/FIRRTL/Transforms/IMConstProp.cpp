@@ -242,13 +242,10 @@ private:
 raw_ostream &operator<<(raw_ostream &os,
                         const ValueAndLeafIndex &valueAndLeafIndex) {
 
-  os << '<';
-  os << valueAndLeafIndex.getValue();
-  os << "@[";
+  os << '<' << valueAndLeafIndex.getValue() << "@[";
   if (valueAndLeafIndex.isRoot())
     os << "root, ";
-  os << "index=" << valueAndLeafIndex.getLeafIndex();
-  os << "]>";
+  os << "index=" << valueAndLeafIndex.getLeafIndex() << "]>";
   return os;
 }
 
@@ -347,7 +344,8 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
         getRootValueWithCorrespondingChildIndexRange(value);
     auto [sourceRoot, sourceIndex, sourceSize] =
         getRootValueWithCorrespondingChildIndexRange(source);
-    assert(valueSize == sourceSize && "range must match");
+    assert(valueSize == sourceSize &&
+           "size must match because they are connected");
     for (unsigned i = 0; i < valueSize; ++i)
       mergeLatticeValue({valueRoot, valueIndex + i},
                         {sourceRoot, sourceIndex + i});
@@ -384,8 +382,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
       llvm::dbgs() << "Lattice Merged: " << value << " ";
       if (!value.isRoot())
         llvm::dbgs() << "[" << translated << "] ";
-      llvm::dbgs() << ": " << latticeValues[translated] << " <= " << source
-                   << "\n";
+      llvm::dbgs() << ": " << latticeValues[translated] << "\n";
     });
   }
 
@@ -457,7 +454,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
 
     auto it = valueToRootValueAndLeafIndex.find(valueAndLeafIndex.getValue());
     assert(it != valueToRootValueAndLeafIndex.end() &&
-           "If the value is not a root, it must be registered before");
+           "if the value is not a root, it must be registered before");
     auto root = it->second;
     return {root.getValue(),
             root.getLeafIndex() + valueAndLeafIndex.getLeafIndex()};
@@ -623,30 +620,20 @@ void IMConstPropPass::runOnOperation() {
   // If a value changed lattice state then reprocess any of its users.
   while (!changedLatticeValueWorklist.empty()) {
     auto changedValue = changedLatticeValueWorklist.pop_back_val();
-    LLVM_DEBUG(llvm::dbgs()
-                   << "Lattice Worklist pop: <" << changedValue.getValue()
-                   << ", index=" << changedValue.getLeafIndex()
-                   << "> = " << latticeValues[changedValue] << "\n";);
+    LLVM_DEBUG(llvm::dbgs() << "Lattice Worklist pop: " << changedValue
+                            << "> = " << latticeValues[changedValue] << "\n";);
 
     for (Operation *user : changedValue.getValue().getUsers()) {
-      if (isBlockExecutable(user->getBlock())) {
-        LLVM_DEBUG(llvm::dbgs() << "Dep direct<" << changedValue.getValue()
-                                << ", index=" << changedValue.getLeafIndex()
-                                << "> = " << *user << "\n";);
+      if (isBlockExecutable(user->getBlock()))
         visitOperation(user, changedValue);
-      }
     }
 
-    auto changedValueAll = rootToChildrenSubelementAccess[changedValue];
-    for (auto changedVal : changedValueAll)
-      for (Operation *user : changedVal.getUsers()) {
-        if (isBlockExecutable(user->getBlock())) {
-          LLVM_DEBUG(llvm::dbgs() << "Dep indirect <" << changedValue.getValue()
-                                  << ", index=" << changedValue.getLeafIndex()
-                                  << "> = " << *user << "\n";);
+    auto changedValueChildrenSubaccess =
+        rootToChildrenSubelementAccess[changedValue];
+    for (auto changedVal : changedValueChildrenSubaccess)
+      for (Operation *user : changedVal.getUsers())
+        if (isBlockExecutable(user->getBlock()))
           visitOperation(user, changedValue);
-        }
-      }
   }
 
   // Rewrite any constants in the modules.
