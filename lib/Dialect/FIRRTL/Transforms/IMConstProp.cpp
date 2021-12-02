@@ -231,7 +231,7 @@ public:
   bool isRoot() const { return valueAndFlag.getInt(); }
 
   friend raw_ostream &operator<<(raw_ostream &os,
-                                 const ValueAndLeafIndex &ValueAndLeafIndex);
+                                 const ValueAndLeafIndex &valueAndLeafIndex);
 
 private:
   // Pair of a value and flag.
