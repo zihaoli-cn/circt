@@ -202,11 +202,16 @@ private:
 };
 
 raw_ostream &operator<<(raw_ostream &os, const LatticeValue &lattice) {
-  os << "<unknown: " << lattice.isUnknown()
-     << ", invalid: " << lattice.isInvalidValue()
-     << ", constant: " << lattice.isConstant()
-     << ", over: " << lattice.isOverdefined() << ">";
-  return os;
+  if (lattice.isInvalidValue())
+    return os << "<invalid>";
+  if (lattice.isUnknown())
+    return os << "<unknown>";
+  if (lattice.isConstant())
+    return os << "<constant: " << lattice.getConstant() << ">";
+  if (lattice.isOverdefined())
+    return os << "<over>";
+
+  llvm_unreachable("Lattice must have exactly one state");
 }
 
 // This class defines the data structure associated with lattice values.
@@ -226,11 +231,27 @@ public:
   unsigned getLeafIndex() const { return leafId; }
   bool isRoot() const { return valueAndFlag.getInt(); }
 
+  friend raw_ostream &operator<<(raw_ostream &os,
+                                 const ValueAndLeafIndex &ValueAndLeafIndex);
+
 private:
   // Pair of a value and flag.
   llvm::PointerIntPair<Value, 1, bool> valueAndFlag;
   unsigned leafId = 0;
 };
+
+raw_ostream &operator<<(raw_ostream &os,
+                        const ValueAndLeafIndex &valueAndLeafIndex) {
+
+  os << '<';
+  os << valueAndLeafIndex.getValue();
+  os << "@[";
+  if (valueAndLeafIndex.isRoot())
+    os << "root, ";
+  os << "index=" << valueAndLeafIndex.getLeafIndex();
+  os << "]>";
+  return os;
+}
 
 } // end anonymous namespace
 
@@ -344,31 +365,32 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   }
 
   void mergeLatticeValue(ValueAndLeafIndex value, LatticeValue source) {
-    LLVM_DEBUG({
-      llvm::dbgs() << "Lattice Merge Values: \n<" << value.getValue()
-                   << ", index=" << value.getLeafIndex() << ">\n"
-                   << " <= <" << source << ">\n";
-    });
 
     // Don't even do a map lookup if from has no info in it.
     if (source.isUnknown())
       return;
-    value = translateToRootIndex(value);
+    auto translated = translateToRootIndex(value);
+
     LLVM_DEBUG({
-      llvm::dbgs() << "Lattice Merge Values: \n<" << value.getValue()
-                   << ", index=" << value.getLeafIndex() << ">\n"
-                   << " <= <" << source << ">\n";
+      llvm::dbgs() << "Lattice Merge Values: " << value << " ";
+      if (!value.isRoot())
+        llvm::dbgs() << "[" << translated << "] ";
+      llvm::dbgs() << ": " << latticeValues[translated] << " <= " << source
+                   << "\n";
     });
-    mergeLatticeValue(value, latticeValues[value], source);
+
+    mergeLatticeValue(translated, latticeValues[translated], source);
+
+    LLVM_DEBUG({
+      llvm::dbgs() << "Lattice Merged: " << value << " ";
+      if (!value.isRoot())
+        llvm::dbgs() << "[" << translated << "] ";
+      llvm::dbgs() << ": " << latticeValues[translated] << " <= " << source
+                   << "\n";
+    });
   }
 
   void mergeLatticeValue(ValueAndLeafIndex result, ValueAndLeafIndex from) {
-    LLVM_DEBUG({
-      llvm::dbgs() << "Lattice Merge Values: \n<" << result.getValue()
-                   << ", index=" << result.getLeafIndex() << ">\n"
-                   << " <= <" << from.getValue()
-                   << ", index=" << from.getLeafIndex() << ">\n";
-    });
     // If 'from' hasn't been computed yet, then it is unknown, don't do
     // anything.
     auto it = find(from);
