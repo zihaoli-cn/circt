@@ -29,7 +29,7 @@ static bool isWireOrReg(Operation *op) {
 
 /// Return true if this is a subelement access.
 static bool isSubelementAccess(Operation *op) {
-  return isa_and_nonnull<SubindexOp, SubindexOp>(op);
+  return isa_and_nonnull<SubindexOp, SubfieldOp>(op);
 }
 
 /// Return true if this is a root value.
