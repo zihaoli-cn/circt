@@ -748,7 +748,9 @@ void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
 }
 
 void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
-  assert(isTrackableType(regReset.getType()) && "register is always trackable");
+  if (!isTrackableType(regReset.getType()))
+    return markOverdefined(regReset);
+
   // The reset value may be known - if so, merge it in.
   auto &destTypes = getLeafGroundTypes(regReset.getType());
 
@@ -1148,8 +1150,12 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
     // If the op had any constants folded, replace them.
     builder.setInsertionPoint(&op);
     bool foldedAny = false;
-    for (auto result : op.getResults())
-      foldedAny |= replaceValueIfPossible(result);
+    for (auto result : op.getResults()) {
+      LLVM_DEBUG(llvm::dbgs() << "Trying to replace " << result);
+      bool successReplace = replaceValueIfPossible(result);
+      LLVM_DEBUG(llvm::dbgs() << "success= " << successReplace << "\n");
+      foldedAny |= successReplace;
+    }
 
     if (foldedAny)
       ++numFoldedOp;
