@@ -293,7 +293,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   }
 
   bool isOverdefined(ValueAndLeafIndex value) const {
-    auto it = find(value);
+    auto it = translateAndFind(value);
     return it != latticeValues.end() && it->second.isOverdefined();
   }
 
@@ -393,7 +393,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void mergeLatticeValue(ValueAndLeafIndex result, ValueAndLeafIndex from) {
     // If 'from' hasn't been computed yet, then it is unknown, don't do
     // anything.
-    auto it = find(from);
+    auto it = translateAndFind(from);
     if (it == latticeValues.end())
       return;
     mergeLatticeValue(result, it->second);
@@ -469,8 +469,13 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   }
 
   DenseMap<ValueAndLeafIndex, LatticeValue>::const_iterator
-  find(ValueAndLeafIndex valueAndLeafIndex) const {
+  translateAndFind(ValueAndLeafIndex valueAndLeafIndex) const {
     return latticeValues.find(translateToRootIndex(valueAndLeafIndex));
+  }
+
+  DenseMap<ValueAndLeafIndex, LatticeValue>::const_iterator
+  translateAndFind(Value value) const {
+    return latticeValues.find(translateToRootIndex({value, 0}));
   }
 
   /// Returns the tuple of root value, index, and size of the given value.
@@ -664,7 +669,7 @@ LatticeValue IMConstPropPass::getExtendedLatticeValue(ValueAndLeafIndex value,
                                                       FIRRTLType destType,
                                                       bool allowTruncation) {
   // If 'value' hasn't been computed yet, then it is unknown.
-  auto it = find(value);
+  auto it = translateAndFind(value);
   if (it == latticeValues.end())
     return LatticeValue();
 
@@ -1078,7 +1083,7 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
     // TODO: We don't allow to replace non-ground type values for now.
     if (!value.getType().cast<FIRRTLType>().isGround())
       return false;
-    auto it = find({value, 0});
+    auto it = translateAndFind(value);
     if (it == latticeValues.end() || it->second.isOverdefined() ||
         it->second.isUnknown())
       return false;
