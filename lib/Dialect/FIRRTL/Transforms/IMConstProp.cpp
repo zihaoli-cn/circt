@@ -35,10 +35,9 @@ static bool isSubelementAccess(Operation *op) {
 /// Return true if this is a root value.
 static bool isRoot(Operation *op) { return !isSubelementAccess(op); }
 
-/// Return true if this is a wire, register or subelement access we're allowed
-/// to delete.
-static bool isDeletableWireOrRegOrSubelementAccess(Operation *op) {
-  return (isWireOrReg(op) || isSubelementAccess(op)) && !hasDontTouch(op);
+/// Return true if this is a wire or register access we're allowed to delete.
+static bool isDeletableWireOrReg(Operation *op) {
+  return isWireOrReg(op) && !hasDontTouch(op);
 }
 
 /// Return true if a type is possible to track. Currently, we allow passive
@@ -1118,9 +1117,15 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
   for (auto &op : llvm::make_early_inc_range(llvm::reverse(*body))) {
     // Connects to values that we found to be constant can be dropped.
     if (auto connect = dyn_cast<ConnectOp>(op)) {
+
+      // FIXME: We don't erase connection if dest is a subelement of aggregate
+      // type for now.
+      auto destRoot = translateToRootIndex(connect.dest());
+      if (!destRoot.getValue().getType().cast<FIRRTLType>().isGround())
+        continue;
+
       if (auto *destOp = connect.dest().getDefiningOp()) {
-        if (isDeletableWireOrRegOrSubelementAccess(destOp) &&
-            !isOverdefined(connect.dest())) {
+        if (isDeletableWireOrReg(destOp) && !isOverdefined(connect.dest())) {
           connect.erase();
           ++numErasedOp;
         }
@@ -1134,8 +1139,8 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
       continue;
 
     // If this operation is already dead, then go ahead and remove it.
-    if (op.use_empty() && (wouldOpBeTriviallyDead(&op) ||
-                           isDeletableWireOrRegOrSubelementAccess(&op))) {
+    if (op.use_empty() &&
+        (wouldOpBeTriviallyDead(&op) || isDeletableWireOrReg(&op))) {
       op.erase();
       continue;
     }
@@ -1147,16 +1152,19 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
     // If the op had any constants folded, replace them.
     builder.setInsertionPoint(&op);
     bool foldedAny = false;
-    for (auto result : op.getResults())
-      foldedAny |= replaceValueIfPossible(result);
+    for (auto result : op.getResults()) {
+      LLVM_DEBUG(llvm::dbgs() << "Trying to replace " << result);
+      bool successReplace = replaceValueIfPossible(result);
+      LLVM_DEBUG(llvm::dbgs() << "success= " << successReplace << "\n");
+      foldedAny |= successReplace;
+    }
 
     if (foldedAny)
       ++numFoldedOp;
 
     // If the operation folded to a constant then we can probably nuke it.
     if (foldedAny && op.use_empty() &&
-        (wouldOpBeTriviallyDead(&op) ||
-         isDeletableWireOrRegOrSubelementAccess(&op))) {
+        (wouldOpBeTriviallyDead(&op) || isDeletableWireOrReg(&op))) {
       op.erase();
       ++numErasedOp;
       continue;
