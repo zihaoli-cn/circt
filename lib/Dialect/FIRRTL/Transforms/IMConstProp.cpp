@@ -901,8 +901,9 @@ void IMConstPropPass::visitConnect(ConnectOp connect,
 
   unsigned index = changedValue.getLeafIndex() - srcIndex;
 
+  auto destGroundType = getLeafGroundTypes(destType)[index].cast<FIRRTLType>();
   // Handle implicit extensions.
-  auto srcValue = getExtendedLatticeValue(changedValue, destType);
+  auto srcValue = getExtendedLatticeValue(changedValue, destGroundType);
   if (srcValue.isUnknown())
     return;
 
@@ -1077,8 +1078,7 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
     // TODO: We don't allow to replace non-ground type values for now.
     if (!value.getType().cast<FIRRTLType>().isGround())
       return false;
-
-    auto it = latticeValues.find({value, 0});
+    auto it = find({value, 0});
     if (it == latticeValues.end() || it->second.isOverdefined() ||
         it->second.isUnknown())
       return false;
