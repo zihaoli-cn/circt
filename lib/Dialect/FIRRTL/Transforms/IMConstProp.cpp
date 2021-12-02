@@ -1001,8 +1001,7 @@ void IMConstPropPass::visitOperation(Operation *op,
   SmallVector<Attribute, 8> operandConstants;
   operandConstants.reserve(op->getNumOperands());
   for (Value operand : op->getOperands()) {
-    // TODO: All operands might be guaranteed to have ground types
-    // already.
+    // We can't handle non-ground types here.
     if (!operand.getType().cast<FIRRTLType>().isGround())
       return;
     auto &operandLattice = latticeValues[translateToRootIndex(operand)];
