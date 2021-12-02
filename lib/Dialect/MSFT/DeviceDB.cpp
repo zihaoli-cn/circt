@@ -113,8 +113,8 @@ size_t PlacementDB::addPlacements(FlatSymbolRefAttr rootMod,
                                   mlir::Operation *op) {
   size_t numFailed = 0;
   for (NamedAttribute attr : op->getAttrs()) {
-    StringRef attrName = attr.first;
-    llvm::TypeSwitch<Attribute>(attr.second)
+    StringRef attrName = attr.getName();
+    llvm::TypeSwitch<Attribute>(attr.getValue())
 
         // Handle switch instance.
         .Case([&](SwitchInstanceAttr instSwitch) {
@@ -186,7 +186,7 @@ PhysLocationAttr PlacementDB::getNearestFreeInColumn(PrimitiveType prim,
   // Simplest possible algorithm.
   PhysLocationAttr nearest = {};
   walkPlacements(
-      [&nearest, columnNum](PhysLocationAttr loc, PlacedInstance inst) {
+      [&nearest, nearestToY](PhysLocationAttr loc, PlacedInstance inst) {
         if (inst.op)
           return;
         if (!nearest) {
@@ -194,8 +194,8 @@ PhysLocationAttr PlacementDB::getNearestFreeInColumn(PrimitiveType prim,
           return;
         }
         int64_t curDist =
-            std::abs((int64_t)columnNum - (int64_t)nearest.getY());
-        int64_t replDist = std::abs((int64_t)columnNum - (int64_t)loc.getY());
+            std::abs((int64_t)nearestToY - (int64_t)nearest.getY());
+        int64_t replDist = std::abs((int64_t)nearestToY - (int64_t)loc.getY());
         if (replDist < curDist)
           nearest = loc;
       },

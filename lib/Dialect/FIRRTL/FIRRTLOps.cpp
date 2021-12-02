@@ -864,12 +864,12 @@ static LogicalResult verifyFExtModuleOp(FExtModuleOp op) {
 
   DictionaryAttr paramDict = paramDictOpt.getValue();
   auto checkParmValue = [&](NamedAttribute elt) -> bool {
-    auto value = elt.second;
+    auto value = elt.getValue();
     if (value.isa<IntegerAttr>() || value.isa<StringAttr>() ||
         value.isa<FloatAttr>())
       return true;
-    op.emitError() << "has unknown extmodule parameter value '" << elt.first
-                   << "' = " << value;
+    op.emitError() << "has unknown extmodule parameter value '"
+                   << elt.getName().getValue() << "' = " << value;
     return false;
   };
 
@@ -1838,8 +1838,8 @@ LogicalResult impl::inferReturnTypes(
 /// attribute does not exist.
 static Attribute getAttr(ArrayRef<NamedAttribute> attrs, StringRef name) {
   for (auto attr : attrs)
-    if (attr.first == name)
-      return attr.second;
+    if (attr.getName() == name)
+      return attr.getValue();
   llvm::report_fatal_error("attribute '" + name + "' not found");
 }
 
@@ -2796,7 +2796,7 @@ static ParseResult parseImplicitSSAName(OpAsmParser &parser,
     resultName = "";
   auto nameAttr = parser.getBuilder().getStringAttr(resultName);
   auto *context = parser.getBuilder().getContext();
-  resultAttrs.push_back({Identifier::get("name", context), nameAttr});
+  resultAttrs.push_back({StringAttr::get("name", context), nameAttr});
   return success();
 }
 
@@ -2861,6 +2861,26 @@ static ParseResult parseSeqMemOp(OpAsmParser &parser,
 /// Always elide "ruw" and elide "annotations" if it exists or if it is empty.
 static void printSeqMemOp(OpAsmPrinter &p, Operation *op, DictionaryAttr attr) {
   printImplicitSSAName(p, op, attr, {"ruw"});
+}
+
+void SeqMemOp::build(OpBuilder &builder, OperationState &result,
+                     FIRRTLType elementType, unsigned numElements, RUWAttr ruw,
+                     StringRef name, ArrayRef<Attribute> annotations) {
+  build(builder, result,
+        CMemoryType::get(builder.getContext(), elementType, numElements), ruw,
+        name, builder.getArrayAttr(annotations));
+}
+
+//===----------------------------------------------------------------------===//
+// CombMemOp Custom attr-dict Directive
+//===----------------------------------------------------------------------===//
+
+void CombMemOp::build(OpBuilder &builder, OperationState &result,
+                      FIRRTLType elementType, unsigned numElements,
+                      StringRef name, ArrayRef<Attribute> annotations) {
+  build(builder, result,
+        CMemoryType::get(builder.getContext(), elementType, numElements), name,
+        builder.getArrayAttr(annotations));
 }
 
 //===----------------------------------------------------------------------===//

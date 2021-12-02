@@ -315,7 +315,7 @@ getLocationInfoAsString(const SmallPtrSet<Operation *, 8> &ops) {
     collectFileLineColLocs(op->getLoc(), locationSet);
 
   auto printLoc = [&](FileLineColLoc loc) {
-    sstr << loc.getFilename();
+    sstr << loc.getFilename().getValue();
     if (auto line = loc.getLine()) {
       sstr << ':' << line;
       if (auto col = loc.getColumn())
@@ -530,6 +530,7 @@ private:
 //===----------------------------------------------------------------------===//
 // EmitterBase
 //===----------------------------------------------------------------------===//
+
 namespace {
 
 class EmitterBase {
@@ -583,6 +584,11 @@ public:
   /// whitespace after a line break.  Do nothing if the StringAttr is null or
   /// the value is empty.
   void emitComment(StringAttr comment);
+
+  /// Given an expression that is spilled into a temporary wire, try to
+  /// synthesize a better name than "_T_42" based on the structure of the
+  /// expression.
+  StringAttr inferStructuralNameForTemporary(Value expr);
 
 private:
   void operator=(const EmitterBase &) = delete;
@@ -751,6 +757,74 @@ void EmitterBase::emitComment(StringAttr comment) {
       line = line.drop_front(breakPos);
     }
   }
+}
+
+/// Given an expression that is spilled into a temporary wire, try to synthesize
+/// a better name than "_T_42" based on the structure of the expression.
+StringAttr EmitterBase::inferStructuralNameForTemporary(Value expr) {
+  StringAttr result;
+
+  // Look through read_inout.
+  if (auto read = expr.getDefiningOp<ReadInOutOp>())
+    return inferStructuralNameForTemporary(read.input());
+
+  // Generate a pretty name for VerbatimExpr's that look macro-like using the
+  // same logic that generates the MLIR syntax name.
+  if (auto verbatim = expr.getDefiningOp<VerbatimExprOp>()) {
+    verbatim.getAsmResultNames([&](Value, StringRef name) {
+      result = StringAttr::get(expr.getContext(), name);
+    });
+  }
+
+  if (auto verbatim = expr.getDefiningOp<VerbatimExprSEOp>()) {
+    verbatim.getAsmResultNames([&](Value, StringRef name) {
+      result = StringAttr::get(expr.getContext(), name);
+    });
+  }
+
+  // Module ports carry names!
+  if (auto blockArg = expr.dyn_cast<BlockArgument>()) {
+    auto moduleOp = cast<HWModuleOp>(blockArg.getOwner()->getParentOp());
+    StringRef name =
+        state.globalNames.getPortVerilogName(moduleOp, blockArg.getArgNumber());
+    result = StringAttr::get(expr.getContext(), name);
+  }
+
+  // Uses of a wire or register can be done inline.
+  if (auto *op = expr.getDefiningOp()) {
+    if (isa<WireOp, RegOp>(op)) {
+      StringRef name = state.globalNames.getDeclarationVerilogName(op);
+      result = StringAttr::get(expr.getContext(), name);
+    }
+  }
+
+  // If this is an extract from a namable object, derive a name from it.
+  if (auto extract = expr.getDefiningOp<ExtractOp>()) {
+    if (auto operandName = inferStructuralNameForTemporary(extract.input())) {
+      unsigned numBits = extract.getType().getWidth();
+      if (numBits == 1)
+        result =
+            StringAttr::get(expr.getContext(), operandName.strref() + "_" +
+                                                   Twine(extract.lowBit()));
+      else
+        result = StringAttr::get(expr.getContext(),
+                                 operandName.strref() + "_" +
+                                     Twine(extract.lowBit() + numBits - 1) +
+                                     "to" + Twine(extract.lowBit()));
+    }
+  }
+
+  // TODO: handle other common patterns.
+
+  // Make sure any synthesized name starts with an _.
+  if (!result || result.strref().empty())
+    return {};
+
+  // Make sure that all temporary names start with an underscore.
+  if (result.strref().front() != '_')
+    result = StringAttr::get(expr.getContext(), "_" + result.strref());
+
+  return result;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1503,7 +1577,10 @@ void ExprEmitter::retroactivelyEmitExpressionIntoTemporary(Operation *op) {
          "Should only be called on expressions thought to be inlined");
 
   emitter.outOfLineExpressions.insert(op);
-  names.addName(op->getResult(0), "_tmp");
+  if (auto name = inferStructuralNameForTemporary(op->getResult(0)))
+    names.addName(op->getResult(0), name);
+  else
+    names.addName(op->getResult(0), "_tmp");
 
   // Remember that this subexpr needs to be emitted independently.
   tooLargeSubExpressions.push_back(op);
@@ -2147,7 +2224,13 @@ void NameCollector::collectNames(Block &block) {
         // case we end up spilling this.
         // FIXME: This is highly unprincipled and should be removed.
         //   https://github.com/llvm/circt/issues/1752
-        names.addName(result, op.getAttrOfType<StringAttr>("name"));
+        auto nameAttr = op.getAttrOfType<StringAttr>("name");
+
+        // If we don't have a specified pretty name, try to infer a name from
+        // the structure of the expression.
+        if (!nameAttr)
+          nameAttr = moduleEmitter.inferStructuralNameForTemporary(result);
+        names.addName(result, nameAttr);
 
         // Don't measure or emit wires that are emitted inline (i.e. the wire
         // definition is emitted on the line of the expression instead of a
@@ -3638,15 +3721,8 @@ void ModuleEmitter::emitBind(BindOp op) {
 
     // Emit the value as an expression.
     auto name = getNameRemotely(portVal, parentPortInfo, parentMod);
-    if (name.empty()) {
-      // Non stable names will come from expressions.  Since we are lowering the
-      // instance also, we can ensure that expressions feeding bound instances
-      // will be lowered consistently to verilog-namable entities.
-      os << childVerilogName.getValue() << '_' << inst.getName() << '_'
-         << elt.getName() << ')';
-    } else {
-      os << name << ')';
-    }
+    assert(!name.empty() && "bind port connection must have a name");
+    os << name << ')';
   }
   if (!isFirst) {
     os << '\n';
@@ -3655,10 +3731,11 @@ void ModuleEmitter::emitBind(BindOp op) {
   os << ");\n";
 }
 
-/// Return the name of a value without using the name map.  This is needed when
-/// looking into an instance from a different module as happens with bind.  It
-/// may return "" when unable to determine a name.  This works in situations
-/// where names are pre-legalized during prepare.
+/// Return the name of a value in a remote module to be used in a `bind`
+/// statement. This function examines the remote module `remoteModule` and looks
+/// up the corresponding name in the provide `GlobalNameTable`. This requires
+/// that all names this function may be asked to lookup have been legalized and
+/// added to that name table.
 StringRef ModuleEmitter::getNameRemotely(Value value,
                                          const ModulePortInfo &modulePorts,
                                          HWModuleOp remoteModule) {
@@ -3666,16 +3743,33 @@ StringRef ModuleEmitter::getNameRemotely(Value value,
     return state.globalNames.getPortVerilogName(
         remoteModule, modulePorts.inputs[barg.getArgNumber()]);
 
-  if (auto readinout = dyn_cast<ReadInOutOp>(value.getDefiningOp())) {
+  Operation *valueOp = value.getDefiningOp();
+
+  // Handle wires/registers, likely as instance inputs.
+  if (auto readinout = dyn_cast<ReadInOutOp>(valueOp)) {
     auto *wireInput = readinout.input().getDefiningOp();
     if (!wireInput)
       return {};
-
     if (isa<WireOp, RegOp>(wireInput))
       return state.globalNames.getDeclarationVerilogName(wireInput);
   }
-  if (auto localparam = dyn_cast<LocalParamOp>(value.getDefiningOp()))
-    return state.globalNames.getDeclarationVerilogName(localparam);
+
+  // Handle values being driven onto wires, likely as instance outputs.
+  if (isa<InstanceOp>(valueOp)) {
+    for (auto &use : value.getUses()) {
+      Operation *user = use.getOwner();
+      if (!isa<AssignOp>(user) || use.getOperandNumber() != 1)
+        continue;
+      Value drivenOnto = user->getOperand(0);
+      Operation *drivenOntoOp = drivenOnto.getDefiningOp();
+      if (isa<WireOp, RegOp>(drivenOntoOp))
+        return state.globalNames.getDeclarationVerilogName(drivenOntoOp);
+    }
+  }
+
+  // Handle local parameters.
+  if (isa<LocalParamOp>(valueOp))
+    return state.globalNames.getDeclarationVerilogName(valueOp);
   return {};
 }
 
@@ -3950,12 +4044,12 @@ void SharedEmitterState::gatherFiles(bool separateModules) {
     auto numArgs = moduleOp.getNumArguments();
     for (size_t p = 0; p != numArgs; ++p)
       for (NamedAttribute argAttr : moduleOp.getArgAttrs(p))
-        if (auto sym = argAttr.second.dyn_cast<FlatSymbolRefAttr>())
+        if (auto sym = argAttr.getValue().dyn_cast<FlatSymbolRefAttr>())
           symbolCache.addDefinition(moduleOp.getNameAttr(), sym.getValue(),
                                     moduleOp, p);
     for (size_t p = 0, e = moduleOp.getNumResults(); p != e; ++p)
       for (NamedAttribute resultAttr : moduleOp.getResultAttrs(p))
-        if (auto sym = resultAttr.second.dyn_cast<FlatSymbolRefAttr>())
+        if (auto sym = resultAttr.getValue().dyn_cast<FlatSymbolRefAttr>())
           symbolCache.addDefinition(moduleOp.getNameAttr(), sym.getValue(),
                                     moduleOp, p + numArgs);
   };
@@ -4005,7 +4099,7 @@ void SharedEmitterState::gatherFiles(bool separateModules) {
         }
       }
 
-      auto destFile = Identifier::get(outputPath, op->getContext());
+      auto destFile = StringAttr::get(outputPath, op->getContext());
       auto &file = files[destFile];
       file.ops.push_back(info);
       file.emitReplicatedOps = emitReplicatedOps;
@@ -4318,7 +4412,7 @@ createOutputFile(StringRef fileName, StringRef dirname,
   return output;
 }
 
-static void createSplitOutputFile(Identifier fileName, FileInfo &file,
+static void createSplitOutputFile(StringAttr fileName, FileInfo &file,
                                   StringRef dirname,
                                   SharedEmitterState &emitter) {
   auto output = createOutputFile(fileName, dirname, emitter);
