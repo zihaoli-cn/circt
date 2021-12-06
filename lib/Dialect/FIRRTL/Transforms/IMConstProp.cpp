@@ -239,16 +239,15 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     return executableBlocks.count(block);
   }
 
-  bool isOverdefined(FieldRef value) const {
-    auto it = translateAndFind(value);
+  bool isOverdefined(FieldRef fieldRef) const {
+    auto it = translateAndFind(fieldRef);
     return it != latticeValues.end() && it->second.isOverdefined();
   }
 
   // Value is regarded as overdefined if one of lattice values associated with
   // the value is overdefined.
   bool isOverdefined(Value value) const {
-    auto [root, index, size] =
-        getRootValueWithCorrespondingChildIndexRange(value);
+    auto [root, index, size] = getRootValueWithCorrespondingLeafIDRange(value);
     auto types = getLeafFieldIDsAndGroundTypes(root.getType());
     for (unsigned i = 0; i < size; ++i)
       if (isOverdefined({root, types[index + i].first}))
@@ -256,14 +255,14 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     return false;
   }
 
-  /// Mark the given pair of value and leaf index as overdefined. This
-  /// means that we cannot refine a specific constant for this value.
-  void markOverdefined(FieldRef value) {
-    value = getFieldRefFromFieldRef(value);
-    auto &entry = latticeValues[value];
+  /// Mark the given fieldRef as overdefined. This means that we cannot refine a
+  /// specific constant for this fieldRef.
+  void markOverdefined(FieldRef fieldRef) {
+    fieldRef = getFieldRefFromFieldRef(fieldRef);
+    auto &entry = latticeValues[fieldRef];
     if (!entry.isOverdefined()) {
       entry.markOverdefined();
-      changedLatticeValueWorklist.push_back(value);
+      changedLatticeValueWorklist.push_back(fieldRef);
     }
   }
 
@@ -272,52 +271,49 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   /// with some values if the value has a aggregate type so iterate over the
   /// corresponding range.
   void markOverdefined(Value value) {
-    auto [root, index, size] =
-        getRootValueWithCorrespondingChildIndexRange(value);
+    auto [root, index, size] = getRootValueWithCorrespondingLeafIDRange(value);
     auto types = getLeafFieldIDsAndGroundTypes(root.getType());
-    for (unsigned int i = 0; i < size; ++i) {
+    for (unsigned int i = 0; i < size; ++i)
       markOverdefined({root, types[index + i].first});
-    }
   }
 
   /// Merge information from the 'from' lattice value into value.  If it
   /// changes, then users of the value are added to the worklist for
   /// revisitation.
-  void mergeLatticeValue(FieldRef value, LatticeValue &valueEntry,
+  void mergeLatticeValue(FieldRef fieldRef, LatticeValue &valueEntry,
                          LatticeValue source) {
-    assert(isRoot(value) && "value must be known to be root beforehand");
-    if (!source.isOverdefined() && hasDontTouch(value.getValue()))
+    assert(isRoot(fieldRef) && "value must be known to be root beforehand");
+    if (!source.isOverdefined() && hasDontTouch(fieldRef.getValue()))
       source = LatticeValue::getOverdefined();
     if (valueEntry.mergeIn(source))
-      changedLatticeValueWorklist.push_back(value);
+      changedLatticeValueWorklist.push_back(fieldRef);
   }
 
   /// Merge two values.
   void mergeLatticeValue(Value value, Value source) {
-    auto [valueRoot, valueIndex, valueSize] =
-        getRootValueWithCorrespondingChildIndexRange(value);
-    auto [sourceRoot, sourceIndex, sourceSize] =
-        getRootValueWithCorrespondingChildIndexRange(source);
+    auto [valueRoot, valueLeafID, valueSize] =
+        getRootValueWithCorrespondingLeafIDRange(value);
+    auto [sourceRoot, sourceLeafID, sourceSize] =
+        getRootValueWithCorrespondingLeafIDRange(source);
     assert(valueSize == sourceSize &&
            "size must match because they are connected");
 
     auto valueTypes = getLeafFieldIDsAndGroundTypes(valueRoot.getType());
     auto sourceTypes = getLeafFieldIDsAndGroundTypes(sourceRoot.getType());
-    for (unsigned i = 0; i < valueSize; ++i) {
-      mergeLatticeValue({valueRoot, valueTypes[valueIndex + i].first},
-                        {sourceRoot, sourceTypes[sourceIndex + i].first});
-    }
+    for (unsigned i = 0; i < valueSize; ++i)
+      mergeLatticeValue({valueRoot, valueTypes[valueLeafID + i].first},
+                        {sourceRoot, sourceTypes[sourceLeafID + i].first});
   }
 
   void mergeLatticeValue(Value value, LatticeValue source) {
     // Don't even do a map lookup if from has no info in it.
     if (source.isUnknown())
       return;
-    auto [valueRoot, valueIndex, valueSize] =
-        getRootValueWithCorrespondingChildIndexRange(value);
+    auto [valueRoot, valueLeafID, valueSize] =
+        getRootValueWithCorrespondingLeafIDRange(value);
     auto types = getLeafFieldIDsAndGroundTypes(value.getType());
     for (unsigned i = 0; i < valueSize; ++i)
-      mergeLatticeValue({valueRoot, types[valueIndex + i].first}, source);
+      mergeLatticeValue({valueRoot, types[valueLeafID + i].first}, source);
   }
 
   void mergeLatticeValue(FieldRef fieldRef, LatticeValue source) {
@@ -378,7 +374,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   /// Return the lattice value for the specified SSA value, extended to the
   /// width of the specified destType.  If allowTruncation is true, then this
   /// allows truncating the lattice value to the specified type.
-  LatticeValue getExtendedLatticeValue(FieldRef value, FIRRTLType destType,
+  LatticeValue getExtendedLatticeValue(FieldRef fieldRef, FIRRTLType destType,
                                        bool allowTruncation = false);
 
   /// Mark the given block as executable.
@@ -387,7 +383,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void markRegResetOp(RegResetOp regReset);
   void markRegOp(RegOp reg);
   void markMemOp(MemOp mem);
-  void markSubelementAccessOp(Operation *op, unsigned index);
+  void markSubelementAccessOp(Operation *op);
   void markInvalidValueOp(InvalidValueOp invalid);
   void markConstantOp(ConstantOp constant);
   void markSpecialConstantOp(SpecialConstantOp specialConstant);
@@ -408,14 +404,14 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   }
 
   /// Return the root value for the specified value.
-  FieldRef getFieldRefFromFieldRef(FieldRef value) const {
-    auto fieldRef = firrtl::getFieldRefFromValue(value.getValue());
-    return fieldRef.getSubField(value.getFieldID());
+  FieldRef getFieldRefFromFieldRef(FieldRef fieldRef) const {
+    auto rootFieldRef = firrtl::getFieldRefFromValue(fieldRef.getValue());
+    return rootFieldRef.getSubField(fieldRef.getFieldID());
   }
 
   DenseMap<FieldRef, LatticeValue>::const_iterator
-  translateAndFind(FieldRef value) const {
-    return latticeValues.find(getFieldRefFromFieldRef(value));
+  translateAndFind(FieldRef fieldRef) const {
+    return latticeValues.find(getFieldRefFromFieldRef(fieldRef));
   }
 
   DenseMap<FieldRef, LatticeValue>::const_iterator
@@ -423,33 +419,32 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     return latticeValues.find(getFieldRefFromValue(value));
   }
 
-  /// Return the tuple of root value, leaf id, and size of the given value.
+  /// Return the tuple of root value, leaf id, and size of the given fieldRef.
   /// This means that `value` represent ground type elements of the
   /// root value in the range [index, index + size).
   std::tuple<Value, unsigned, unsigned>
-  getRootValueWithCorrespondingChildIndexRange(FieldRef value) const {
-    auto rootFieldRef = getFieldRefFromFieldRef(value);
-    auto leafID = fieldRefToLeafId(rootFieldRef);
+  getRootValueWithCorrespondingLeafIDRange(FieldRef fieldRef) const {
+    auto rootFieldRef = getFieldRefFromFieldRef(fieldRef);
+    auto leafID = fieldRefToLeafID(rootFieldRef);
 
     return {rootFieldRef.getValue(), leafID,
-            getNumberOfLeafs(value.getValue().getType())};
+            getNumberOfGroundTypes(fieldRef.getValue().getType())};
   }
 
   std::tuple<Value, unsigned, unsigned>
-  getRootValueWithCorrespondingChildIndexRange(Value value) const {
-    return getRootValueWithCorrespondingChildIndexRange({value, 0});
+  getRootValueWithCorrespondingLeafIDRange(Value value) const {
+    return getRootValueWithCorrespondingLeafIDRange({value, 0});
   }
 
-  /// Return the number of ground types in `type`. Results are cached in
-  /// `typeToNumberOfGroundTypes`.
-  unsigned getNumberOfLeafs(Type type) const {
+  /// Return the number of ground types in `type`
+  unsigned getNumberOfGroundTypes(Type type) const {
     return getLeafFieldIDsAndGroundTypes(type).size();
   }
 
   /// Return a vector of pair of fieldIDs and ground types which `type` has.
   const SmallVector<std::pair<unsigned, FIRRTLType>> &
   getLeafFieldIDsAndGroundTypes(Type type) const {
-    auto &entry = typeToLeafGroundTypes[type];
+    auto &entry = typeToLeafFieldIDsAndGroundTypes[type];
     if (!entry.empty())
       return entry;
     auto fn = [&entry](unsigned fieldID, FIRRTLType type) {
@@ -460,14 +455,14 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   }
 
   /// Return leaf id of the given fieldID.
-  unsigned fieldRefToLeafId(FieldRef fieldRef) const {
+  unsigned fieldRefToLeafID(FieldRef fieldRef) const {
     auto type = fieldRef.getValue().getType();
-    auto fieldId = fieldRef.getFieldID();
+    auto fieldID = fieldRef.getFieldID();
     auto types = getLeafFieldIDsAndGroundTypes(type);
 
     // We can calucate the leaf id by finding the lower bound.
-    auto it = std::lower_bound(
-        types.begin(), types.end(), std::make_pair(fieldId, /*dummy*/ Type()),
+    auto *it = std::lower_bound(
+        types.begin(), types.end(), std::make_pair(fieldID, /*dummy*/ Type()),
         [](const auto lhs, const auto &rhs) { return lhs.first < rhs.first; });
 
     return std::distance(types.begin(), it);
@@ -480,9 +475,9 @@ private:
   /// This keeps track of the current state of each tracked value.
   DenseMap<FieldRef, LatticeValue> latticeValues;
 
-  /// A map from a type to its leaf ground types.
+  /// A map from a type to its leaf fieldIDs and ground types.
   mutable DenseMap<Type, SmallVector<std::pair<unsigned, FIRRTLType>>>
-      typeToLeafGroundTypes;
+      typeToLeafFieldIDsAndGroundTypes;
 
   /// A map from a fieldRef to its subelement access.
   DenseMap<FieldRef, SmallVector<Value, 4>> rootToChildrenSubelementAccess;
@@ -563,11 +558,11 @@ void IMConstPropPass::runOnOperation() {
 /// Return the lattice value for the specified SSA value, extended to the width
 /// of the specified destType.  If allowTruncation is true, then this allows
 /// truncating the lattice value to the specified type.
-LatticeValue IMConstPropPass::getExtendedLatticeValue(FieldRef value,
+LatticeValue IMConstPropPass::getExtendedLatticeValue(FieldRef fieldRef,
                                                       FIRRTLType destType,
                                                       bool allowTruncation) {
   // If 'value' hasn't been computed yet, then it is unknown.
-  auto it = translateAndFind(value);
+  auto it = translateAndFind(fieldRef);
   if (it == latticeValues.end())
     return LatticeValue();
 
@@ -625,9 +620,9 @@ void IMConstPropPass::markBlockExecutable(Block *block) {
     else if (auto mem = dyn_cast<MemOp>(op))
       markMemOp(mem);
     else if (auto subindex = dyn_cast<SubindexOp>(op))
-      markSubelementAccessOp(subindex, subindex.index());
+      markSubelementAccessOp(subindex);
     else if (auto subfield = dyn_cast<SubfieldOp>(op))
-      markSubelementAccessOp(subfield, subfield.fieldIndex());
+      markSubelementAccessOp(subfield);
   }
 }
 
@@ -665,9 +660,9 @@ void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
 
 void IMConstPropPass::visitRegResetOp(RegResetOp regReset,
                                       FieldRef changedValue) {
-  auto [srcRoot, srcIndex, srcSize] =
-      getRootValueWithCorrespondingChildIndexRange(regReset.resetValue());
-  auto leafId = fieldRefToLeafId(changedValue);
+  auto [srcRoot, srcLeafID, srcSize] =
+      getRootValueWithCorrespondingLeafIDRange(regReset.resetValue());
+  auto changedValueLeafID = fieldRefToLeafID(changedValue);
 
   // If source is not changed value, we don't have to process this operation.
   if (srcRoot != changedValue.getValue())
@@ -675,11 +670,14 @@ void IMConstPropPass::visitRegResetOp(RegResetOp regReset,
 
   // If chandedValue is not included in the range of the source value, just
   // skip.
-  if (srcIndex > leafId || srcIndex + srcSize <= leafId)
+  if (srcLeafID > changedValueLeafID ||
+      srcLeafID + srcSize <= changedValueLeafID)
     return;
 
-  unsigned index = leafId - srcIndex;
+  // Caluculate an index in the current regreset operation.
+  unsigned index = changedValueLeafID - srcLeafID;
 
+  // Get a target fieldID and ground type.
   auto [fieldID, destType] =
       getLeafFieldIDsAndGroundTypes(regReset.getType())[index];
 
@@ -694,13 +692,10 @@ void IMConstPropPass::markMemOp(MemOp mem) {
     markOverdefined(result);
 }
 
-void IMConstPropPass::markSubelementAccessOp(Operation *subelementAccess,
-                                             unsigned) {
+void IMConstPropPass::markSubelementAccessOp(Operation *subelementAccess) {
   auto result = subelementAccess->getResult(0);
-  auto [root, index, size] =
-      getRootValueWithCorrespondingChildIndexRange(result);
+  auto [root, index, size] = getRootValueWithCorrespondingLeafIDRange(result);
   auto types = getLeafFieldIDsAndGroundTypes(root.getType());
-
   for (unsigned i = 0, e = size; i < e; ++i)
     rootToChildrenSubelementAccess[{root, types[index + i].first}].push_back(
         result);
@@ -787,9 +782,9 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
     return;
   }
 
-  auto [srcRoot, srcIndex, srcSize] =
-      getRootValueWithCorrespondingChildIndexRange(connect.src());
-  auto leafId = fieldRefToLeafId(changedValue);
+  auto [srcRoot, srcLeafID, srcSize] =
+      getRootValueWithCorrespondingLeafIDRange(connect.src());
+  auto changedValueLeafID = fieldRefToLeafID(changedValue);
 
   // If source is not changed value, we don't have to process this operation.
   if (srcRoot != changedValue.getValue())
@@ -797,11 +792,14 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
 
   // If chandedValue is not included in the range of the source value, just
   // skip.
-  if (srcIndex > leafId || srcIndex + srcSize <= leafId)
+  if (srcLeafID > changedValueLeafID ||
+      srcLeafID + srcSize <= changedValueLeafID)
     return;
 
-  unsigned index = leafId - srcIndex;
+  // Caluculate an index in the current connect operation.
+  unsigned index = changedValueLeafID - srcLeafID;
 
+  // Get a target fieldID and ground type.
   auto [fieldID, destGroundType] =
       getLeafFieldIDsAndGroundTypes(destType)[index];
 
@@ -859,7 +857,7 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
 }
 
 void IMConstPropPass::visitPartialConnect(PartialConnectOp partialConnect,
-                                          FieldRef leafIndex) {
+                                          FieldRef fieldRef) {
   partialConnect.emitError("IMConstProp cannot handle partial connect");
 }
 
