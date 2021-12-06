@@ -29,11 +29,12 @@ static bool isWireOrReg(Operation *op) {
 
 /// Return true if this is a subelement access.
 static bool isSubelementAccess(Operation *op) {
-  return isa_and_nonnull<SubindexOp, SubfieldOp>(op);
+  return isa<SubindexOp, SubfieldOp>(op);
 }
 
-/// Return true if this is a root value.
-static bool isRoot(Operation *op) { return !isSubelementAccess(op); }
+/// Return true if this is a root value. If a defining op is null, then this is
+/// an argument so we regard it as a root value.
+static bool isRoot(Operation *op) { return !op || !isSubelementAccess(op); }
 static bool isRoot(FieldRef fieldRef) {
   return isRoot(fieldRef.getValue().getDefiningOp());
 }
