@@ -697,7 +697,8 @@ struct EntityOpConversion : public ConvertToLLVMPattern {
         {i8PtrTy, entityStatePtrTy, LLVM::LLVMPointerType::get(sigTy)}));
     for (size_t i = 0, e = entityOp.getNumArguments(); i < e; ++i)
       intermediate.addInputs(i, voidTy);
-    rewriter.applySignatureConversion(&entityOp.getBody(), intermediate);
+    rewriter.applySignatureConversion(&entityOp.getBody(), intermediate,
+                                      typeConverter);
 
     OpBuilder bodyBuilder =
         OpBuilder::atBlockBegin(&entityOp.getBlocks().front());
@@ -721,7 +722,8 @@ struct EntityOpConversion : public ConvertToLLVMPattern {
       final.remapInput(i + 3, gep.getResult());
     }
 
-    rewriter.applySignatureConversion(&entityOp.getBody(), final);
+    rewriter.applySignatureConversion(&entityOp.getBody(), final,
+                                      typeConverter);
 
     // Get the converted entity signature.
     auto funcTy = LLVM::LLVMFunctionType::get(
@@ -796,7 +798,8 @@ struct ProcOpConversion : public ConvertToLLVMPattern {
     intermediate.addInputs(procArgTys);
     for (size_t i = 0, e = procOp.getNumArguments(); i < e; ++i)
       intermediate.addInputs(i, voidTy);
-    rewriter.applySignatureConversion(&procOp.getBody(), intermediate);
+    rewriter.applySignatureConversion(&procOp.getBody(), intermediate,
+                                      typeConverter);
 
     // Get the final signature conversion.
     OpBuilder bodyBuilder =
@@ -1970,9 +1973,6 @@ using CombModSOpConversion =
 using CombICmpOpConversion =
     OneToOneConvertToLLVMPattern<comb::ICmpOp, LLVM::ICmpOp>;
 
-using CombSExtOpConversion =
-    OneToOneConvertToLLVMPattern<comb::SExtOp, LLVM::SExtOp>;
-
 // comb.mux supports any type thus this conversion relies on the type converter
 // to be able to convert the type of the operands and result to an LLVM_Type
 using CombMuxOpConversion =
@@ -2633,8 +2633,8 @@ void circt::populateLLHDToLLVMConversionPatterns(LLVMTypeConverter &converter,
   // Arithmetic conversion patterns.
   patterns.add<CombAddOpConversion, CombSubOpConversion, CombMulOpConversion,
                CombDivUOpConversion, CombDivSOpConversion, CombModUOpConversion,
-               CombModSOpConversion, CombICmpOpConversion, CombSExtOpConversion,
-               CombMuxOpConversion>(converter);
+               CombModSOpConversion, CombICmpOpConversion, CombMuxOpConversion>(
+      converter);
 
   // Unit conversion patterns.
   patterns.add<ProcOpConversion, WaitOpConversion, HaltOpConversion>(ctx,

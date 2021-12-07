@@ -260,10 +260,10 @@ struct SharedEmitterState {
 
   /// The additional files to emit, with the output file name as the key into
   /// the map.
-  llvm::MapVector<Identifier, FileInfo> files;
+  llvm::MapVector<StringAttr, FileInfo> files;
 
   /// The various file lists and their contents to emit
-  llvm::StringMap<SmallVector<Identifier>> fileLists;
+  llvm::StringMap<SmallVector<StringAttr>> fileLists;
 
   /// A list of operations replicated in each output file (e.g., `sv.verbatim`
   /// or `sv.ifdef` without dedicated output file).
@@ -285,12 +285,6 @@ struct SharedEmitterState {
 
   /// Information about renamed global symbols, parameters, etc.
   const GlobalNameTable globalNames;
-
-  /// Flag indicating whether emission is currently in a parallel processing
-  /// mode. This is used for runtime assertions to ensure that certain blocks of
-  /// the code which cross-reference into other modules do so only in sequential
-  /// regions.
-  std::atomic<bool> isInParallelMode = {};
 
   explicit SharedEmitterState(ModuleOp designOp, const LoweringOptions &options,
                               GlobalNameTable globalNames)

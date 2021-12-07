@@ -556,9 +556,11 @@ hw.module @if_multi_line_expr1(%clock: i1, %reset: i1, %really_long_port: i11) {
   // CHECK-NEXT: else
   // CHECK-NEXT:   tmp6 <= {{..}}14{really_long_port[10]}}, really_long_port} & 25'h3039;
   // CHECK-NEXT: end
-  sv.alwaysff(posedge %clock)  {
-    %0 = comb.sext %really_long_port : (i11) -> i25
-  %c12345_i25 = hw.constant 12345 : i25
+  sv.alwaysff(posedge %clock) {
+    %sign = comb.extract %really_long_port from 10 : (i11) -> i1
+    %signs = comb.replicate %sign : (i1) -> i14
+    %0 = comb.concat %signs, %really_long_port : i14, i11
+    %c12345_i25 = hw.constant 12345 : i25
     %1 = comb.and %0, %c12345_i25 : i25
     sv.passign %tmp6, %1 : i25
   }(syncreset : posedge %reset)  {
@@ -573,7 +575,9 @@ hw.module @if_multi_line_expr2(%clock: i1, %reset: i1, %really_long_port: i11) {
   %tmp6 = sv.reg  : !hw.inout<i25>
 
   %c12345_i25 = hw.constant 12345 : i25
-  %0 = comb.sext %really_long_port : (i11) -> i25
+  %sign = comb.extract %really_long_port from 10 : (i11) -> i1
+  %signs = comb.replicate %sign : (i1) -> i14
+  %0 = comb.concat %signs, %really_long_port : i14, i11
   %1 = comb.and %0, %c12345_i25 : i25
   // CHECK:   wire [24:0] _T = {{..}}14{really_long_port[10]}}, really_long_port} & 25'h3039;
 
@@ -895,18 +899,18 @@ hw.module @DontDuplicateSideEffectingVerbatim() {
   %b = sv.reg sym @regSym : !hw.inout<i42>
 
   sv.initial {
-    // CHECK: automatic logic [41:0] _T = SIDEEFFECT;
+    // CHECK: automatic logic [41:0] _SIDEEFFECT = SIDEEFFECT;
     %tmp = sv.verbatim.expr.se "SIDEEFFECT" : () -> i42
-    // CHECK: automatic logic [41:0] _T_0 = b;
+    // CHECK: automatic logic [41:0] _T = b;
     %verb_tmp = sv.verbatim.expr.se "{{0}}" : () -> i42 {symbols = [#hw.innerNameRef<@DontDuplicateSideEffectingVerbatim::@regSym>]}
-    // CHECK: a = _T;
+    // CHECK: a = _SIDEEFFECT;
     sv.bpassign %a, %tmp : i42
-    // CHECK: a = _T;
+    // CHECK: a = _SIDEEFFECT;
     sv.bpassign %a, %tmp : i42
 
-    // CHECK: a = _T_0;
+    // CHECK: a = _T;
     sv.bpassign %a, %verb_tmp : i42
-    // CHECK: a = _T_0;
+    // CHECK: a = _T;
     sv.bpassign %a, %verb_tmp : i42
     %tmp2 = sv.verbatim.expr "NO_EFFECT_" : () -> i42
     // CHECK: a = NO_EFFECT_;
@@ -955,13 +959,13 @@ hw.module @InlineAutomaticLogicInit(%a : i42, %b: i42, %really_really_long_port:
   %regValue = sv.reg : !hw.inout<i42>
   // CHECK: initial begin
   sv.initial {
-    // CHECK: automatic logic [63:0] _T = `THING;
-    // CHECK: automatic logic [41:0] _T_0 = a + a;
-    // CHECK: automatic logic [41:0] _T_1 = _T_0 + b;
-    // CHECK: automatic logic [41:0] _T_2;
+    // CHECK: automatic logic [63:0] _THING = `THING;
+    // CHECK: automatic logic [41:0] _T = a + a;
+    // CHECK: automatic logic [41:0] _T_0 = _T + b;
+    // CHECK: automatic logic [41:0] _T_1;
     %thing = sv.verbatim.expr "`THING" : () -> i64
 
-    // CHECK: regValue = _T[44:3];
+    // CHECK: regValue = _THING[44:3];
     %v = comb.extract %thing from 3 : (i64) -> i42
     sv.bpassign %regValue, %v : i42
 
@@ -969,30 +973,30 @@ hw.module @InlineAutomaticLogicInit(%a : i42, %b: i42, %really_really_long_port:
     // inline because it just references ports.
     %tmp = comb.add %a, %a : i42
     sv.bpassign %regValue, %tmp : i42
-    // CHECK: regValue = _T_0;
+    // CHECK: regValue = _T;
 
     // tmp2 is as well.  This can be emitted inline because it just references
     // a port and an already-emitted-inline variable 'a'.
     %tmp2 = comb.add %tmp, %b : i42
     sv.bpassign %regValue, %tmp2 : i42
-    // CHECK: regValue = _T_1;
+    // CHECK: regValue = _T_0;
 
     %tmp3 = comb.add %tmp2, %b : i42
     sv.bpassign %regValue, %tmp3 : i42
-    // CHECK: regValue = _T_1 + b;
+    // CHECK: regValue = _T_0 + b;
 
     // CHECK: `ifdef FOO
     sv.ifdef.procedural "FOO" {
-      // CHECK: _T_2 = a + a;
+      // CHECK: _T_1 = a + a;
       // tmp is multi-use so it needs a temporary, but cannot be emitted inline
       // because it is in an ifdef.
       %tmp4 = comb.add %a, %a : i42
       sv.bpassign %regValue, %tmp4 : i42
-      // CHECK: regValue = _T_2;
+      // CHECK: regValue = _T_1;
 
       %tmp5 = comb.add %tmp4, %b : i42
       sv.bpassign %regValue, %tmp5 : i42
-      // CHECK: regValue = _T_2 + b;
+      // CHECK: regValue = _T_1 + b;
     }
   }
 
@@ -1003,14 +1007,18 @@ hw.module @InlineAutomaticLogicInit(%a : i42, %b: i42, %really_really_long_port:
   sv.initial {
     // CHECK: automatic logic [41:0] [[THING:.+]] = `THING;
     // CHECK: automatic logic [41:0] [[THING3:.+]] = [[THING]] + {{..}}31{really_really_long_port[10]}},
-    // CHECK: really_really_long_port};
-    // CHECK: automatic logic [41:0] [[MANYTHING:.+]] = [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] *
-    // CHECK:                                           [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]];
+    // CHECK-SAME: really_really_long_port};
+    // CHECK: automatic logic [41:0] [[MANYTHING:.+]] =
+    // CHECK-SAME: [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] *
+    // CHECK:  [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] *
+    // CHECK:  [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]] * [[THING]];
 
     // Check the indentation level of temporaries.  Issue #1625
     %thing = sv.verbatim.expr.se "`THING" : () -> i42
 
-    %thing2 = comb.sext %really_really_long_port : (i11) -> i42
+    %sign = comb.extract %really_really_long_port from 10 : (i11) -> i1
+    %signs = comb.replicate %sign : (i1) -> i31
+    %thing2 = comb.concat %signs, %really_really_long_port : i31, i11
     %thing3 = comb.add %thing, %thing2 : i42  // multiuse.
 
     // multiuse, refers to other 'automatic logic' thing so must be emitted in
@@ -1127,3 +1135,17 @@ sv.bind #hw.innerNameRef<@remoteInstDut::@bindInst2>
 // CHECK-NEXT: //._z (z)
 // CHECK-NEXT: );
 
+// Regression test for a bug where bind emission would not use sanitized names.
+hw.module @NastyPortParent() {
+  %false = hw.constant false
+  %0 = hw.instance "foo" sym @foo @NastyPort(".lots$of.dots": %false: i1) -> (".more.dots": i1) {doNotPrint = true}
+}
+hw.module @NastyPort(%.lots$of.dots: i1) -> (".more.dots": i1) {
+  %false = hw.constant false
+  hw.output %false : i1
+}
+sv.bind #hw.innerNameRef<@NastyPortParent::@foo>
+// CHECK-LABEL: bind NastyPortParent NastyPort foo (
+// CHECK-NEXT:    ._lots24of_dots (foo__lots24of_dots)
+// CHECK-NEXT:    ._more_dots     (foo__more_dots)
+// CHECK-NEXT:  );

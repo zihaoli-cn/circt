@@ -107,7 +107,8 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
 
     %in2s = firrtl.asSInt %in2 : (!firrtl.uint<2>) -> !firrtl.sint<2>
 
-    // CHECK: [[PADRES:%.+]] = comb.sext %in2 : (i2) -> i3
+    // CHECK: [[PADRES_SIGN:%.+]] = comb.extract %in2 from 1 : (i2) -> i1 
+    // CHECK: [[PADRES:%.+]] = comb.concat  [[PADRES_SIGN]], %in2 : i1, i2 
     %3 = firrtl.pad %in2s, 3 : (!firrtl.sint<2>) -> !firrtl.sint<3>
 
     // CHECK: [[PADRES2:%.+]] = comb.concat %c0_i2, %in2 : i2, i2
@@ -185,17 +186,17 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
     // CHECK-NEXT: [[VAL18:%.+]] = comb.mul  [[ZEXTC1]], [[ZEXT2]] : i14
     %18 = firrtl.mul %6, %2 : (!firrtl.uint<8>, !firrtl.uint<6>) -> !firrtl.uint<14>
 
-    // CHECK-NEXT: [[IN3SEXT:%.+]] = comb.sext %in3 : (i8) -> i9
-    // CHECK-NEXT: [[PADRESSEXT:%.+]] = comb.sext [[PADRES]] : (i3) -> i9
+    // CHECK: [[IN3SEXT:%.+]] = comb.concat {{.*}}, %in3 : i1, i8 
+    // CHECK: [[PADRESSEXT:%.+]] = comb.concat {{.*}}, [[PADRES]] : i6, i3 
     // CHECK-NEXT: = comb.divs [[IN3SEXT]], [[PADRESSEXT]] : i9
     %19 = firrtl.div %in3, %3 : (!firrtl.sint<8>, !firrtl.sint<3>) -> !firrtl.sint<9>
 
-    // CHECK-NEXT: [[IN3EX:%.+]] = comb.sext [[PADRES]] : (i3) -> i8
+    // CHECK: [[IN3EX:%.+]] = comb.concat {{.*}}, [[PADRES]] : i5, i3
     // CHECK-NEXT: [[MOD1:%.+]] = comb.mods %in3, [[IN3EX]] : i8
     // CHECK-NEXT: = comb.extract [[MOD1]] from 0 : (i8) -> i3
     %20 = firrtl.rem %in3, %3 : (!firrtl.sint<8>, !firrtl.sint<3>) -> !firrtl.sint<3>
 
-    // CHECK-NEXT: [[IN4EX:%.+]] = comb.sext [[PADRES]] : (i3) -> i8
+    // CHECK: [[IN4EX:%.+]] = comb.concat {{.*}}, [[PADRES]] : i5, i3 
     // CHECK-NEXT: [[MOD2:%.+]] = comb.mods [[IN4EX]], %in3 : i8
     // CHECK-NEXT: = comb.extract [[MOD2]] from 0 : (i8) -> i3
     %21 = firrtl.rem %3, %in3 : (!firrtl.sint<3>, !firrtl.sint<8>) -> !firrtl.sint<3>
@@ -225,11 +226,11 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
 
     %s24 = firrtl.asSInt %24 : (!firrtl.uint<3>) -> !firrtl.sint<3>
 
-    // CHECK-NEXT: [[SEXT:%.+]] = comb.sext [[XOR]] : (i3) -> i4
+    // CHECK: [[SEXT:%.+]] = comb.concat {{.*}}, [[XOR]] : i1, i3
     // CHECK-NEXT: [[SUB:%.+]] = comb.sub %c0_i4, [[SEXT]] : i4
     %25 = firrtl.neg %s24 : (!firrtl.sint<3>) -> !firrtl.sint<4>
 
-    // CHECK-NEXT: [[CVT4:%.+]] = comb.sext [[CVT]] : (i3) -> i4
+    // CHECK: [[CVT4:%.+]] = comb.concat {{.*}}, [[CVT]] : i1, i3
     // CHECK-NEXT: comb.mux {{.*}}, [[CVT4]], [[SUB]] : i4
     %26 = firrtl.mux(%17, %23, %25) : (!firrtl.uint<1>, !firrtl.sint<3>, !firrtl.sint<4>) -> !firrtl.sint<4>
 
@@ -245,7 +246,7 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
     // CHECK-NEXT: [[SHIFT:%.+]] = comb.shrs %in3, {{.*}} : i8
     %a29 = firrtl.dshr %in3, %9 : (!firrtl.sint<8>, !firrtl.uint<3>) -> !firrtl.sint<8>
 
-    // CHECK-NEXT: = comb.sext %in3 : (i8) -> i15
+    // CHECK: = comb.concat {{.*}}, %in3 : i7, i8
     // CHECK-NEXT: = comb.concat %c0_i12, [[DSHR]]
     // CHECK-NEXT: [[SHIFT:%.+]] = comb.shl {{.*}}, {{.*}} : i15
     %30 = firrtl.dshl %in3, %29 : (!firrtl.sint<8>, !firrtl.uint<3>) -> !firrtl.sint<15>
@@ -254,7 +255,7 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
     %dshlw = firrtl.dshlw %29, %29 : (!firrtl.uint<3>, !firrtl.uint<3>) -> !firrtl.uint<3>
 
     // Issue #367: https://github.com/llvm/circt/issues/367
-    // CHECK-NEXT: = comb.sext {{.*}} : (i4) -> i14
+    // CHECK: = comb.concat {{.*}} : i10, i4
     // CHECK-NEXT: [[SHIFT:%.+]] = comb.shrs {{.*}}, {{.*}} : i14
     // CHECK-NEXT: = comb.extract [[SHIFT]] from 0 : (i14) -> i4
     %31 = firrtl.dshr %25, %18 : (!firrtl.sint<4>, !firrtl.uint<14>) -> !firrtl.sint<4>
@@ -293,7 +294,7 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
     %60 = firrtl.add %58, %59 : (!firrtl.uint<32>, !firrtl.uint<43>) -> !firrtl.uint<44>
 
     // Issue #353
-    // CHECK: [[PADRES_EXT:%.+]] = comb.sext [[PADRES]] : (i3) -> i8
+    // CHECK: [[PADRES_EXT:%.+]] = comb.concat {{.*}}, [[PADRES]] : i5, i3
     // CHECK: = comb.and %in3, [[PADRES_EXT]] : i8
     %49 = firrtl.and %in3, %3 : (!firrtl.sint<8>, !firrtl.sint<3>) -> !firrtl.uint<8>
 
@@ -311,7 +312,7 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
     // CHECK:  = comb.sub %c0_i5, [[CONCAT]] : i5
     %52 = firrtl.neg %in1 : (!firrtl.uint<4>) -> !firrtl.sint<5>
     %53 = firrtl.neg %in4 : (!firrtl.uint<0>) -> !firrtl.sint<1>
-    // CHECK: [[SEXT:%.+]] = comb.sext %in3 : (i8) -> i9
+    // CHECK: [[SEXT:%.+]] = comb.concat {{.*}}, %in3 : i1, i8
     // CHECK: = comb.sub %c0_i9, [[SEXT]] : i9
     %54 = firrtl.neg %in3 : (!firrtl.sint<8>) -> !firrtl.sint<9>
     // CHECK: hw.output %false, %false : i1, i1
@@ -1284,5 +1285,160 @@ firrtl.circuit "Simple"   attributes {annotations = [{class =
     firrtl.connect %o2, %r2 : !firrtl.uint<4>, !firrtl.uint<4>
     firrtl.connect %o3, %r3 : !firrtl.uint<32>, !firrtl.uint<32>
     firrtl.connect %o4, %r4 : !firrtl.uint<100>, !firrtl.uint<100>
+  }
+  
+  // CHECK-LABEL: hw.module @init1DVector
+  firrtl.module @init1DVector(in %clock: !firrtl.clock, in %a: !firrtl.vector<uint<1>, 2>, out %b: !firrtl.vector<uint<1>, 2>) {
+    %r = firrtl.reg %clock  : !firrtl.vector<uint<1>, 2>
+    // CHECK:      sv.ifdef.procedural "RANDOMIZE_REG_INIT"  {
+    // CHECK-NEXT:   %1 = sv.array_index_inout %r[%false] : !hw.inout<array<2xi1>>, i1
+    // CHECK-NEXT:   %RANDOM = sv.verbatim.expr.se "`RANDOM" : () -> i32 {symbols = []}
+    // CHECK-NEXT:   %2 = comb.extract %RANDOM from 0 : (i32) -> i1
+    // CHECK-NEXT:   sv.bpassign %1, %2 : i1
+    // CHECK-NEXT:   %3 = sv.array_index_inout %r[%true] : !hw.inout<array<2xi1>>, i1
+    // CHECK-NEXT:   %4 = comb.extract %RANDOM from 1 : (i32) -> i1
+    // CHECK-NEXT:   sv.bpassign %3, %4 : i1
+    // CHECK-NEXT: }
+
+    firrtl.connect %r, %a : !firrtl.vector<uint<1>, 2>, !firrtl.vector<uint<1>, 2>
+    firrtl.connect %b, %r : !firrtl.vector<uint<1>, 2>, !firrtl.vector<uint<1>, 2>
+    // CHECK:      sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r, %a : !hw.array<2xi1>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: hw.output %0 : !hw.array<2xi1>
+  }
+
+  // CHECK-LABEL: hw.module @init2DVector
+  firrtl.module @init2DVector(in %clock: !firrtl.clock, in %a: !firrtl.vector<vector<uint<1>, 1>, 1>, out %b: !firrtl.vector<vector<uint<1>, 1>, 1>) {
+    %r = firrtl.reg %clock  : !firrtl.vector<vector<uint<1>, 1>, 1>
+    // CKECK-NEXT: sv.ifdef.procedural "RANDOMIZE_REG_INIT"  {
+    // CKECK-NEXT:   %1 = sv.array_index_inout %r[%false] : !hw.inout<array<1xarray<1xi1>>>, i1
+    // CKECK-NEXT:   %2 = sv.array_index_inout %1[%false] : !hw.inout<array<1xi1>>, i1
+    // CKECK-NEXT:   %RANDOM = sv.verbatim.expr.se "`RANDOM" : () -> i32 {symbols = []}
+    // CKECK-NEXT:   %3 = comb.extract %RANDOM from 0 : (i32) -> i1
+    // CKECK-NEXT:   sv.bpassign %2, %3 : i1
+    // CKECK-NEXT: }
+
+    firrtl.connect %r, %a : !firrtl.vector<vector<uint<1>, 1>, 1>, !firrtl.vector<vector<uint<1>, 1>, 1>
+    firrtl.connect %b, %r : !firrtl.vector<vector<uint<1>, 1>, 1>, !firrtl.vector<vector<uint<1>, 1>, 1>
+
+    // CHECK:      sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r, %a : !hw.array<1xarray<1xi1>>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: hw.output %0 : !hw.array<1xarray<1xi1>>
+  }
+
+  // CHECK-LABEL: hw.module @connectNarrowUIntVector
+  firrtl.module @connectNarrowUIntVector(in %clock: !firrtl.clock, in %a: !firrtl.vector<uint<1>, 1>, out %b: !firrtl.vector<uint<3>, 1>) {
+    %r1 = firrtl.reg %clock  : !firrtl.vector<uint<2>, 1>
+    firrtl.connect %r1, %a : !firrtl.vector<uint<2>, 1>, !firrtl.vector<uint<1>, 1>
+    firrtl.connect %b, %r1 : !firrtl.vector<uint<3>, 1>, !firrtl.vector<uint<2>, 1>
+    // CHECK:      %2 = hw.array_get %a[%false] : !hw.array<1xi1>
+    // CHECK-NEXT: %3 = comb.concat %false, %2 : i1, i1
+    // CHECK-NEXT: %4 = hw.array_create %3 : i2
+    // CHECK-NEXT: sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r1, %4 : !hw.array<1xi2>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: %5 = hw.array_get %1[%false] : !hw.array<1xi2>
+    // CHECK-NEXT: %6 = comb.concat %false, %5 : i1, i2
+    // CHECK-NEXT: %7 = hw.array_create %6 : i3
+    // CHECK-NEXT: sv.assign %.b.output, %7 : !hw.array<1xi3>
+    // CHECK-NEXT: hw.output %0 : !hw.array<1xi3>
+  }
+
+  // CHECK-LABEL: hw.module @connectNarrowSIntVector
+  firrtl.module @connectNarrowSIntVector(in %clock: !firrtl.clock, in %a: !firrtl.vector<sint<1>, 1>, out %b: !firrtl.vector<sint<3>, 1>) {
+    %r1 = firrtl.reg %clock  : !firrtl.vector<sint<2>, 1>
+    firrtl.connect %r1, %a : !firrtl.vector<sint<2>, 1>, !firrtl.vector<sint<1>, 1>
+    firrtl.connect %b, %r1 : !firrtl.vector<sint<3>, 1>, !firrtl.vector<sint<2>, 1>
+    // CHECK:      %2 = hw.array_get %a[%false] : !hw.array<1xi1>
+    // CHECK-NEXT: %3 = comb.concat %2, %2 : i1, i1 
+    // CHECK-NEXT: %4 = hw.array_create %3 : i2
+    // CHECK-NEXT: sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r1, %4 : !hw.array<1xi2>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: %5 = hw.array_get %1[%false] : !hw.array<1xi2>
+    // CHECK-NEXT: %6 = comb.extract %5 from 1 : (i2) -> i1 
+    // CHECK-NEXT: %7 = comb.concat %6, %5 : i1, i2 
+    // CHECK-NEXT: %8 = hw.array_create %7 : i3
+    // CHECK-NEXT: sv.assign %.b.output, %8 : !hw.array<1xi3>
+    // CHECK-NEXT: hw.output %0 : !hw.array<1xi3>
+  }
+
+  // CHECK-LABEL: hw.module @partialConnectVector
+  firrtl.module @partialConnectVector(in %clock: !firrtl.clock, in %a: !firrtl.vector<uint<3>, 1>, out %b: !firrtl.vector<uint<1>, 1>) {
+    %r = firrtl.reg %clock  : !firrtl.vector<uint<2>, 1>
+    firrtl.partialconnect %r, %a : !firrtl.vector<uint<2>, 1>, !firrtl.vector<uint<3>, 1>
+    firrtl.partialconnect %b, %r : !firrtl.vector<uint<1>, 1>, !firrtl.vector<uint<2>, 1>
+    // CHECK:      %2 = hw.array_get %a[%false] : !hw.array<1xi3>
+    // CHECK-NEXT: %3 = comb.extract %2 from 0 : (i3) -> i2
+    // CHECK-NEXT: %4 = hw.array_create %3 : i2
+    // CHECK-NEXT: sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r, %4 : !hw.array<1xi2>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: %5 = hw.array_get %1[%false] : !hw.array<1xi2>
+    // CHECK-NEXT: %6 = comb.extract %5 from 0 : (i2) -> i1
+    // CHECK-NEXT: %7 = hw.array_create %6 : i1
+    // CHECK-NEXT: %8 = sv.array_index_inout %.b.output[%false] : !hw.inout<array<1xi1>>, i1
+    // CHECK-NEXT: %9 = hw.array_get %7[%false] : !hw.array<1xi1>
+    // CHECK-NEXT: sv.assign %8, %9 : i1
+    // CHECK-NEXT: hw.output %0 : !hw.array<1xi1>
+  }
+
+  // CHECK-LABEL: hw.module @SubIndex
+  firrtl.module @SubIndex(in %a: !firrtl.vector<vector<uint<1>, 1>, 1>, in %clock: !firrtl.clock, out %o1: !firrtl.uint<1>, out %o2: !firrtl.vector<uint<1>, 1>) {
+    %r1 = firrtl.reg %clock  : !firrtl.uint<1>
+    %r2 = firrtl.reg %clock  : !firrtl.vector<uint<1>, 1>
+    %0 = firrtl.subindex %a[0] : !firrtl.vector<vector<uint<1>, 1>, 1>
+    %1 = firrtl.subindex %0[0] : !firrtl.vector<uint<1>, 1>
+    firrtl.connect %r1, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %r2, %0 : !firrtl.vector<uint<1>, 1>, !firrtl.vector<uint<1>, 1>
+    firrtl.connect %o1, %r1 : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %o2, %r2 : !firrtl.vector<uint<1>, 1>, !firrtl.vector<uint<1>, 1>
+    // CHECK:      %2 = hw.array_get %a[%false] : !hw.array<1xarray<1xi1>>
+    // CHECK-NEXT: %3 = hw.array_get %2[%false] : !hw.array<1xi1>
+    // CHECK-NEXT: sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r1, %3 : i1
+    // CHECK-NEXT:   sv.passign %r2, %2 : !hw.array<1xi1>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: hw.output %0, %1 : i1, !hw.array<1xi1>
+  }
+
+  // CHECK-LABEL: hw.module @partialConnectDifferentVectorLength
+  firrtl.module @partialConnectDifferentVectorLength(in %clock: !firrtl.clock, in %a: !firrtl.vector<uint<1>, 2>, out %b: !firrtl.vector<uint<1>, 1>) {
+    %r1 = firrtl.reg %clock  : !firrtl.vector<uint<1>, 2>
+    firrtl.connect %r1, %a : !firrtl.vector<uint<1>, 2>, !firrtl.vector<uint<1>, 2>
+    firrtl.partialconnect %b, %r1 : !firrtl.vector<uint<1>, 1>, !firrtl.vector<uint<1>, 2>
+    // CHECK:      sv.always posedge %clock  {
+    // CHECK-NEXT:   sv.passign %r1, %a : !hw.array<2xi1>
+    // CHECK-NEXT: }
+    // CHECK-NEXT: %2 = hw.array_get %1[%false] : !hw.array<2xi1>
+    // CHECK-NEXT: %3 = hw.array_create %2 : i1
+    // CHECK-NEXT: %4 = sv.array_index_inout %.b.output[%false] : !hw.inout<array<1xi1>>, i1
+    // CHECK-NEXT: %5 = hw.array_get %3[%false] : !hw.array<1xi1>
+    // CHECK-NEXT: sv.assign %4, %5 : i1
+    // CHECK-NEXT: hw.output %0 : !hw.array<1xi1>
+  }
+
+  // CHECK-LABEL: hw.module @SubindexDestination
+  firrtl.module @SubindexDestination(in %clock: !firrtl.clock, in %a: !firrtl.vector<uint<1>, 3>, out %b: !firrtl.vector<uint<1>, 3>) {
+    %0 = firrtl.subindex %b[2] : !firrtl.vector<uint<1>, 3>
+    %1 = firrtl.subindex %a[2] : !firrtl.vector<uint<1>, 3>
+    firrtl.connect %0, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+    // CHECK:      %c-2_i2 = hw.constant -2 : i2
+    // CHECK-NEXT: %.b.output = sv.wire  : !hw.inout<array<3xi1>>
+    // CHECK-NEXT: %0 = sv.read_inout %.b.output : !hw.inout<array<3xi1>>
+    // CHECK-NEXT: %1 = sv.array_index_inout %.b.output[%c-2_i2] : !hw.inout<array<3xi1>>, i2
+    // CHECK-NEXT: %2 = hw.array_get %a[%c-2_i2] : !hw.array<3xi1>
+    // CHECK-NEXT: sv.assign %1, %2 : i1
+    // CHECK-NEXT: hw.output %0 : !hw.array<3xi1>
+  }
+
+  // CHECK-LABEL: hw.module @zero_width_constant()
+  // https://github.com/llvm/circt/issues/2269
+  firrtl.module @zero_width_constant(out %a: !firrtl.uint<0>) {
+    // CHECK-NEXT: hw.output
+    %c0_ui0 = firrtl.constant 0 : !firrtl.uint<0>
+    firrtl.connect %a, %c0_ui0 : !firrtl.uint<0>, !firrtl.uint<0>
   }
 }

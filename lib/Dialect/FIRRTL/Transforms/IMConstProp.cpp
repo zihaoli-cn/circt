@@ -11,6 +11,7 @@
 #include "circt/Dialect/FIRRTL/FIRRTLAttributes.h"
 #include "circt/Dialect/FIRRTL/InstanceGraph.h"
 #include "circt/Dialect/FIRRTL/Passes.h"
+#include "circt/Support/APInt.h"
 #include "mlir/IR/Threading.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/TinyPtrVector.h"
@@ -263,7 +264,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     auto &entry = latticeValues[fieldRef];
     if (!entry.isOverdefined()) {
       entry.markOverdefined();
-      changedLatticeValueWorklist.push_back(fieldRef);
+      changedLatticeValueWorklist.push(fieldRef);
     }
   }
 
@@ -287,7 +288,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     if (!source.isOverdefined() && hasDontTouch(fieldRef.getValue()))
       source = LatticeValue::getOverdefined();
     if (valueEntry.mergeIn(source))
-      changedLatticeValueWorklist.push_back(fieldRef);
+      changedLatticeValueWorklist.push(fieldRef);
   }
 
   /// Merge two values.
@@ -367,7 +368,7 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     // If we've changed this value then revisit all the users.
     auto &valueEntry = latticeValues[fieldRef];
     if (valueEntry != source) {
-      changedLatticeValueWorklist.push_back(fieldRef);
+      changedLatticeValueWorklist.push(fieldRef);
       valueEntry = source;
     }
   }
@@ -382,7 +383,6 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
   void markBlockExecutable(Block *block);
   void markWireOrUnresetableRegOp(Operation *wireOrReg);
   void markRegResetOp(RegResetOp regReset);
-  void markRegOp(RegOp reg);
   void markMemOp(MemOp mem);
   void markSubelementAccessOp(Operation *op);
   void markInvalidValueOp(InvalidValueOp invalid);
@@ -492,7 +492,7 @@ private:
 
   /// A worklist of values whose LatticeValue recently changed, indicating the
   /// users need to be reprocessed.
-  SmallVector<FieldRef, 64> changedLatticeValueWorklist;
+  std::queue<FieldRef> changedLatticeValueWorklist;
 
   /// This keeps track of users the instance results that correspond to output
   /// ports.
@@ -527,7 +527,8 @@ void IMConstPropPass::runOnOperation() {
 
   // If a value changed lattice state then reprocess any of its users.
   while (!changedLatticeValueWorklist.empty()) {
-    auto changedValue = changedLatticeValueWorklist.pop_back_val();
+    auto changedValue = changedLatticeValueWorklist.front();
+    changedLatticeValueWorklist.pop();
     LLVM_DEBUG(llvm::dbgs() << "Lattice Worklist pop: " << changedValue
                             << "> = " << latticeValues[changedValue] << "\n";);
 
@@ -592,7 +593,7 @@ LatticeValue IMConstPropPass::getExtendedLatticeValue(FieldRef fieldRef,
     return result; // Already the right width, we're done.
 
   // Otherwise, extend the constant using the signedness of the source.
-  resultConstant = resultConstant.extOrTrunc(destWidth);
+  resultConstant = extOrTruncZeroWidth(resultConstant, destWidth);
   return LatticeValue(IntegerAttr::get(destType.getContext(), resultConstant));
 }
 

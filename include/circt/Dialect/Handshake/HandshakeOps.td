@@ -209,7 +209,8 @@ def ReturnOp : Handshake_Op<"return", [Terminator]> {
 }
 
 def BufferOp : Handshake_Op<"buffer", [NoSideEffect, HasClock,
-  AllTypesMatch<["operand", "result"]>]> {
+  DeclareOpInterfaceMethods<ExecutableOpInterface>,
+  DeclareOpInterfaceMethods<GeneralOpInterface>]> {
   let summary = "buffer operation";
 
   let description = [{
@@ -487,7 +488,7 @@ def SourceOp : Handshake_Op<"source", [NoSideEffect]> {
   }];
 
   let results = (outs AnyType:$result);
-  let assemblyFormat = [{ operands attr-dict `:` type($result)}];
+  let assemblyFormat = [{ attr-dict `:` type($result)}];
 }
 
 def NeverOp : Handshake_Op<"never", [NoSideEffect]> {
@@ -499,7 +500,7 @@ def NeverOp : Handshake_Op<"never", [NoSideEffect]> {
   }];
 
   let results = (outs AnyType:$result);
-  let assemblyFormat = [{ operands attr-dict `:` type($result)}];
+  let assemblyFormat = [{ attr-dict `:` type($result)}];
 }
 
 def ConstantOp : Handshake_Op<"constant", [
@@ -562,7 +563,7 @@ def StartOp : Handshake_Op<"start", [
 
   let skipDefaultBuilders = 1;
   let builders = [OpBuilder<(ins)>];
-  let assemblyFormat = [{ operands attr-dict `:` type($result)}];
+  let assemblyFormat = [{ attr-dict `:` type($result)}];
 }
 
 def TerminatorOp : Handshake_Op<"terminator", [Terminator]> {
@@ -681,6 +682,7 @@ def LoadOp : Handshake_Op<"load", [
   let builders = [OpBuilder<(ins "Value":$memref, "ArrayRef<Value>":$indices)>];
   let printer = "return ::print$cppClass(p, *this);";
   let parser = "return ::parse$cppClass(parser, result);";
+  let verifier = "return ::verify$cppClass(*this);";
 }
 
 def StoreOp : Handshake_Op<"store", [
@@ -714,6 +716,7 @@ def StoreOp : Handshake_Op<"store", [
       [OpBuilder<(ins "Value":$valueToStore, "ArrayRef<Value>":$indices)>];
   let printer = "return ::print$cppClass(p, *this);";
   let parser = "return ::parse$cppClass(parser, result);";
+  let verifier = "return ::verify$cppClass(*this);";
 }
 
 def JoinOp : Handshake_Op<"join", [

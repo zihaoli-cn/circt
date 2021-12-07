@@ -11,6 +11,7 @@ with Context() as ctx, Location.unknown():
   circt.register_dialects(ctx)
 
   i1 = IntegerType.get_signless(1)
+  i14 = IntegerType.get_signless(14)
   i32 = IntegerType.get_signless(32)
 
   m = Module.create()
@@ -24,9 +25,9 @@ with Context() as ctx, Location.unknown():
       bit = hw.ConstantOp(IntegerAttr.get(i1, 1))
 
       # CHECK: comb.extract %[[CONST]] from 14
-      comb.ExtractOp.create(14, i32, const.result)
+      comb.ExtractOp.create(14, i14, const.result)
       # CHECK: comb.extract %[[CONST]] from 14
-      extract = comb.ExtractOp.create(14, i32)
+      extract = comb.ExtractOp.create(14, i14)
       connect(extract.input, const.result)
 
       # CHECK: comb.parity %[[CONST]]
@@ -34,12 +35,6 @@ with Context() as ctx, Location.unknown():
       # CHECK: comb.parity %[[CONST]]
       parity = comb.ParityOp.create(result_type=i32)
       connect(parity.input, const.result)
-
-      # CHECK: comb.sext %[[CONST]]
-      comb.SExtOp.create(const.result, result_type=i32)
-      # CHECK: comb.sext %[[CONST]]
-      sext = comb.SExtOp.create(result_type=i32)
-      connect(sext.input, const.result)
 
       # CHECK: comb.divs %[[CONST]], %[[CONST]]
       comb.DivSOp.create(const.result, const.result)

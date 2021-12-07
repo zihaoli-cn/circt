@@ -101,9 +101,9 @@ splitTarget(StringRef target, MLIRContext *context) {
 /// each named entity along the path.
 /// c|c:ai/Am:bi/Bm>d.agg[3] ->
 /// c|c>ai, c|Am>bi, c|Bm>d.agg[2]
-static SmallVector<std::tuple<std::string, std::string, std::string>>
+static SmallVector<std::tuple<std::string, StringRef, StringRef>>
 expandNonLocal(StringRef target) {
-  SmallVector<std::tuple<std::string, std::string, std::string>> retval;
+  SmallVector<std::tuple<std::string, StringRef, StringRef>> retval;
   StringRef circuit;
   std::tie(circuit, target) = target.split('|');
   while (target.count(':')) {
@@ -111,8 +111,7 @@ expandNonLocal(StringRef target) {
     std::tie(nla, target) = target.split(':');
     StringRef inst, mod;
     std::tie(mod, inst) = nla.split('/');
-    retval.emplace_back((circuit + "|" + mod + ">" + inst).str(), mod.str(),
-                        inst.str());
+    retval.emplace_back((circuit + "|" + mod + ">" + inst).str(), mod, inst);
   }
   if (target.empty()) {
     retval.emplace_back(circuit.str(), "", "");
@@ -132,9 +131,9 @@ expandNonLocal(StringRef target) {
 
 /// Make an anchor for a non-local annotation.  Use the expanded path to build
 /// the module and name list in the anchor.
-static FlatSymbolRefAttr buildNLA(
-    CircuitOp circuit, size_t nlaSuffix,
-    SmallVectorImpl<std::tuple<std::string, std::string, std::string>> &nlas) {
+static FlatSymbolRefAttr
+buildNLA(CircuitOp circuit, size_t nlaSuffix,
+         SmallVectorImpl<std::tuple<std::string, StringRef, StringRef>> &nlas) {
   OpBuilder b(circuit.getBodyRegion());
   SmallVector<Attribute> mods;
   SmallVector<Attribute> insts;
@@ -1012,11 +1011,11 @@ scatterOMIR(Attribute original, unsigned &annotationID,
       .Case<DictionaryAttr>([&](DictionaryAttr dict) -> Optional<Attribute> {
         NamedAttrList newAttrs;
         for (auto pairs : dict) {
-          auto maybeValue = scatterOMIR(pairs.second, annotationID,
+          auto maybeValue = scatterOMIR(pairs.getValue(), annotationID,
                                         newAnnotations, circuit, nlaNumber);
           if (!maybeValue)
             return None;
-          newAttrs.append(pairs.first, maybeValue.getValue());
+          newAttrs.append(pairs.getName(), maybeValue.getValue());
         }
         return DictionaryAttr::get(ctx, newAttrs);
       })
@@ -1071,7 +1070,7 @@ scatterOMField(Attribute original, const Attribute root, unsigned &annotationID,
 
   // Generate an arbitrary identifier to use for caching when using
   // `maybeStringToLocation`.
-  Identifier locatorFilenameCache = Identifier::get(".", ctx);
+  StringAttr locatorFilenameCache = StringAttr::get(".", ctx);
   FileLineColLoc fileLineColLocCache;
 
   // Convert location from a string to a location attribute.
@@ -1140,7 +1139,7 @@ scatterOMNode(Attribute original, const Attribute root, unsigned &annotationID,
 
   // Generate an arbitrary identifier to use for caching when using
   // `maybeStringToLocation`.
-  Identifier locatorFilenameCache = Identifier::get(".", ctx);
+  StringAttr locatorFilenameCache = StringAttr::get(".", ctx);
   FileLineColLoc fileLineColLocCache;
 
   // Convert the location from a string to a location attribute.

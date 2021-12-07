@@ -83,6 +83,11 @@ def InstanceOp : FIRRTLOp<"instance", [
     /// and updates any users of the remaining ports to point at the new
     /// instance.
     InstanceOp erasePorts(OpBuilder &builder, ArrayRef<unsigned> portIndices);
+
+    /// Clone the instance op and add ports.  This is usually used in
+    /// conjuction with adding ports to the referenced module. This will emit
+    /// the new InstanceOp to the same location.
+    InstanceOp cloneAndInsertPorts(ArrayRef<std::pair<unsigned, PortInfo>> ports);
   }];
 }
 
@@ -96,6 +101,12 @@ def CombMemOp : FIRRTLOp<"combmem"> {
   let results = (outs CMemoryType:$result);
   let assemblyFormat = "custom<ImplicitSSAName>(attr-dict) `:` type($result)";
   let hasCanonicalizer = true;
+  let builders = [
+    OpBuilder<(ins "FIRRTLType":$elementType, "unsigned":$numElements, 
+                   "mlir::StringRef":$name,
+                   "ArrayAttr":$annotations)>
+  ];
+
 }
 
 def SeqMemOp : FIRRTLOp<"seqmem"> {
@@ -109,6 +120,11 @@ def SeqMemOp : FIRRTLOp<"seqmem"> {
   let results = (outs CMemoryType:$result);
   let assemblyFormat = "$ruw custom<SeqMemOp>(attr-dict) `:` type($result)";
   let hasCanonicalizer = true;
+  let builders = [
+    OpBuilder<(ins "FIRRTLType":$elementType, "unsigned":$numElements, 
+                   "RUWAttr":$ruw, "mlir::StringRef":$name, 
+                   "ArrayAttr":$annotations)>
+  ];
 }
 
 def MemoryPortOp : FIRRTLOp<"memoryport", [InferTypeOpInterface,

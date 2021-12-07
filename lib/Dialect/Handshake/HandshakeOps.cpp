@@ -469,12 +469,12 @@ void handshake::FuncOp::build(OpBuilder &builder, OperationState &state,
   state.attributes.append(attrs.begin(), attrs.end());
 
   if (const auto *argNamesAttrIt = llvm::find_if(
-          attrs, [&](auto attr) { return attr.first == "argNames"; });
+          attrs, [&](auto attr) { return attr.getName() == "argNames"; });
       argNamesAttrIt == attrs.end())
     state.addAttribute("argNames", builder.getArrayAttr({}));
 
   if (llvm::find_if(attrs, [&](auto attr) {
-        return attr.first == "resNames";
+        return attr.getName() == "resNames";
       }) == attrs.end())
     state.addAttribute("resNames", builder.getArrayAttr({}));
 
@@ -1116,6 +1116,18 @@ std::string handshake::StoreOp::getOperandName(unsigned int idx) {
   return opName;
 }
 
+template <typename TMemoryOp>
+static LogicalResult verifyMemoryAccessOp(TMemoryOp op) {
+  if (op.addresses().size() == 0)
+    return op.emitOpError() << "No addresses were specified";
+
+  return success();
+}
+
+static LogicalResult verifyLoadOp(handshake::LoadOp op) {
+  return verifyMemoryAccessOp(op);
+}
+
 std::string handshake::StoreOp::getResultName(unsigned int idx) {
   std::string resName;
   if (idx == 0)
@@ -1139,6 +1151,10 @@ void handshake::StoreOp::build(OpBuilder &builder, OperationState &result,
 
   // Address outputs (from store to lsq)
   result.types.append(indices.size(), builder.getIndexType());
+}
+
+static LogicalResult verifyStoreOp(handshake::StoreOp op) {
+  return verifyMemoryAccessOp(op);
 }
 
 static ParseResult parseStoreOp(OpAsmParser &parser, OperationState &result) {

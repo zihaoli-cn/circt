@@ -88,7 +88,7 @@ static bool tryToExecute(Operation *op,
     std::vector<llvm::Any> out(outs.size());
     auto generalOp = dyn_cast<GeneralOpInterface>(op);
     if (!generalOp)
-      op->emitError("Undefined execution for the current op");
+      op->emitOpError("Undefined execution for the current op");
     generalOp.execute(in, out);
     storeValues(out, outs, valueMap);
     updateTime(ins, outs, timeMap, latency);
@@ -114,16 +114,15 @@ bool MergeOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
                          llvm::DenseMap<mlir::Value, double> &timeMap,
                          std::vector<std::vector<llvm::Any>> & /*store*/,
                          std::vector<mlir::Value> &scheduleList) {
-  Operation *op = getOperation();
   bool found = false;
   int i = 0;
-  for (mlir::Value in : op->getOperands()) {
+  for (mlir::Value in : getOperands()) {
     if (valueMap.count(in) == 1) {
       if (found)
-        op->emitError("More than one valid input to Merge!");
+        emitOpError("More than one valid input to Merge!");
       auto t = valueMap[in];
-      valueMap[op->getResult(0)] = t;
-      timeMap[op->getResult(0)] = timeMap[in];
+      valueMap[result()] = t;
+      timeMap[result()] = timeMap[in];
       // Consume the inputs.
       valueMap.erase(in);
       found = true;
@@ -131,7 +130,7 @@ bool MergeOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
     i++;
   }
   if (!found)
-    op->emitError("No valid input to Merge!");
+    emitOpError("No valid input to Merge!");
   scheduleList.push_back(getResult());
   return true;
 }
@@ -140,21 +139,23 @@ bool MuxOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
                        llvm::DenseMap<mlir::Value, double> &timeMap,
                        std::vector<std::vector<llvm::Any>> & /*store*/,
                        std::vector<mlir::Value> &scheduleList) {
-  Operation *op = getOperation();
-  mlir::Value control = op->getOperand(0);
+  mlir::Value control = selectOperand();
   if (valueMap.count(control) == 0)
     return false;
   auto controlValue = valueMap[control];
   auto controlTime = timeMap[control];
-  mlir::Value in = llvm::any_cast<APInt>(controlValue) == 0 ? op->getOperand(1)
-                                                            : op->getOperand(2);
+  auto opIdx = llvm::any_cast<APInt>(controlValue).getZExtValue();
+  assert(opIdx < dataOperands().size() &&
+         "Trying to select a non-existing mux operand");
+
+  mlir::Value in = dataOperands()[opIdx];
   if (valueMap.count(in) == 0)
     return false;
   auto inValue = valueMap[in];
   auto inTime = timeMap[in];
   double time = std::max(controlTime, inTime);
-  valueMap[op->getResult(0)] = inValue;
-  timeMap[op->getResult(0)] = time;
+  valueMap[result()] = inValue;
+  timeMap[result()] = time;
 
   // Consume the inputs.
   valueMap.erase(control);
@@ -168,30 +169,26 @@ bool ControlMergeOp::tryExecute(
     llvm::DenseMap<mlir::Value, double> &timeMap,
     std::vector<std::vector<llvm::Any>> & /*store*/,
     std::vector<mlir::Value> &scheduleList) {
-  Operation *op = getOperation();
   bool found = false;
-  int i = 0;
-  for (mlir::Value in : op->getOperands()) {
-    if (valueMap.count(in) == 1) {
+  for (auto in : llvm::enumerate(getOperands())) {
+    if (valueMap.count(in.value()) == 1) {
       if (found)
-        op->emitError("More than one valid input to CMerge!");
-      auto t = valueMap[in];
-      valueMap[op->getResult(0)] = t;
-      timeMap[op->getResult(0)] = timeMap[in];
+        emitOpError("More than one valid input to CMerge!");
+      valueMap[result()] = valueMap[in.value()];
+      timeMap[result()] = timeMap[in.value()];
 
-      valueMap[op->getResult(1)] = APInt(INDEX_WIDTH, i);
-      timeMap[op->getResult(1)] = timeMap[in];
+      valueMap[index()] = APInt(INDEX_WIDTH, in.index());
+      timeMap[index()] = timeMap[in.value()];
 
       // Consume the inputs.
-      valueMap.erase(in);
+      valueMap.erase(in.value());
 
       found = true;
     }
-    i++;
   }
   if (!found)
-    op->emitError("No valid input to CMerge!");
-  scheduleList = toVector(op->getResults());
+    emitOpError("No valid input to CMerge!");
+  scheduleList = toVector(getResults());
   return true;
 }
 
@@ -214,19 +211,18 @@ bool ConditionalBranchOp::tryExecute(
     llvm::DenseMap<mlir::Value, double> &timeMap,
     std::vector<std::vector<llvm::Any>> & /*store*/,
     std::vector<mlir::Value> &scheduleList) {
-  Operation *op = getOperation();
-  mlir::Value control = op->getOperand(0);
+  mlir::Value control = conditionOperand();
   if (valueMap.count(control) == 0)
     return false;
   auto controlValue = valueMap[control];
   auto controlTime = timeMap[control];
-  mlir::Value in = op->getOperand(1);
+  mlir::Value in = dataOperand();
   if (valueMap.count(in) == 0)
     return false;
   auto inValue = valueMap[in];
   auto inTime = timeMap[in];
-  mlir::Value out = llvm::any_cast<APInt>(controlValue) != 0 ? op->getResult(0)
-                                                             : op->getResult(1);
+  mlir::Value out =
+      llvm::any_cast<APInt>(controlValue) != 0 ? trueResult() : falseResult();
   double time = std::max(controlTime, inTime);
   valueMap[out] = inValue;
   timeMap[out] = time;
@@ -265,6 +261,20 @@ bool SinkOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
   return true;
 }
 
+void BufferOp::execute(std::vector<llvm::Any> &ins,
+                       std::vector<llvm::Any> &outs) {
+  outs[0] = ins[0];
+}
+
+bool BufferOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
+                          llvm::DenseMap<unsigned, unsigned> & /*memoryMap*/,
+                          llvm::DenseMap<mlir::Value, double> &timeMap,
+                          std::vector<std::vector<llvm::Any>> & /*store*/,
+                          std::vector<mlir::Value> &scheduleList) {
+  return tryToExecute(getOperation(), valueMap, timeMap, scheduleList,
+                      getNumSlots());
+}
+
 void ConstantOp::execute(std::vector<llvm::Any> & /*ins*/,
                          std::vector<llvm::Any> &outs) {
   auto attr = (*this)->getAttrOfType<mlir::IntegerAttr>("value");
@@ -279,31 +289,19 @@ bool ConstantOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
   return tryToExecute(getOperation(), valueMap, timeMap, scheduleList, 0);
 }
 
-bool ExternalMemoryOp::tryExecute(
-    llvm::DenseMap<mlir::Value, llvm::Any> & /*valueMap*/,
-    llvm::DenseMap<unsigned, unsigned> & /*memoryMap*/,
-    llvm::DenseMap<mlir::Value, double> & /*timeMap*/,
-    std::vector<std::vector<llvm::Any>> & /*store*/,
-    std::vector<mlir::Value> & /*scheduleList*/) {
-  // todo(mortbopet): implement execution of ExternalMemoryOp's.
-  assert(false && "implement me");
-  return 0;
-}
-
-bool MemoryOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
-                          llvm::DenseMap<unsigned, unsigned> &memoryMap,
-                          llvm::DenseMap<mlir::Value, double> &timeMap,
-                          std::vector<std::vector<llvm::Any>> &store,
-                          std::vector<mlir::Value> &scheduleList) {
-  Operation *op = getOperation();
-  int opIndex = 0;
+template <typename TMemOp>
+static bool
+executeMemoryOperation(TMemOp op, unsigned buffer, int opIndex,
+                       llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
+                       llvm::DenseMap<unsigned, unsigned> &memoryMap,
+                       llvm::DenseMap<mlir::Value, double> &timeMap,
+                       std::vector<std::vector<llvm::Any>> &store,
+                       std::vector<mlir::Value> &scheduleList) {
   bool notReady = false;
-  unsigned buffer = memoryMap[id()];
-
-  for (unsigned i = 0; i < stCount(); i++) {
+  for (unsigned i = 0; i < op.stCount(); i++) {
     mlir::Value data = op->getOperand(opIndex++);
     mlir::Value address = op->getOperand(opIndex++);
-    mlir::Value nonceOut = op->getResult(ldCount() + i);
+    mlir::Value nonceOut = op->getResult(op.ldCount() + i);
     if ((!valueMap.count(data) || !valueMap.count(address))) {
       notReady = true;
       continue;
@@ -330,10 +328,10 @@ bool MemoryOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
     valueMap.erase(address);
   }
 
-  for (unsigned i = 0; i < ldCount(); i++) {
+  for (unsigned i = 0; i < op.ldCount(); i++) {
     mlir::Value address = op->getOperand(opIndex++);
     mlir::Value dataOut = op->getResult(i);
-    mlir::Value nonceOut = op->getResult(ldCount() + stCount() + i);
+    mlir::Value nonceOut = op->getResult(op.ldCount() + op.stCount() + i);
     if (!valueMap.count(address)) {
       notReady = true;
       continue;
@@ -359,17 +357,26 @@ bool MemoryOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
   return (notReady) ? false : true;
 }
 
+bool MemoryOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
+                          llvm::DenseMap<unsigned, unsigned> &memoryMap,
+                          llvm::DenseMap<mlir::Value, double> &timeMap,
+                          std::vector<std::vector<llvm::Any>> &store,
+                          std::vector<mlir::Value> &scheduleList) {
+  unsigned buffer = memoryMap[id()];
+  return executeMemoryOperation(*this, buffer, 0, valueMap, memoryMap, timeMap,
+                                store, scheduleList);
+}
+
 bool LoadOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
                         llvm::DenseMap<unsigned, unsigned> & /*memoryMap*/,
                         llvm::DenseMap<mlir::Value, double> &timeMap,
                         std::vector<std::vector<llvm::Any>> & /*store*/,
                         std::vector<mlir::Value> &scheduleList) {
-  Operation *op = getOperation();
-  mlir::Value address = op->getOperand(0);
-  mlir::Value data = op->getOperand(1);
-  mlir::Value nonce = op->getOperand(2);
-  mlir::Value addressOut = op->getResult(1);
-  mlir::Value dataOut = op->getResult(0);
+  mlir::Value address = getOperand(0);
+  mlir::Value data = getOperand(1);
+  mlir::Value nonce = getOperand(2);
+  mlir::Value addressOut = getResult(1);
+  mlir::Value dataOut = getResult(0);
   if ((valueMap.count(address) && !valueMap.count(nonce)) ||
       (!valueMap.count(address) && valueMap.count(nonce)) ||
       (!valueMap.count(address) && !valueMap.count(nonce) &&
@@ -399,6 +406,17 @@ bool LoadOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
     llvm_unreachable("why?");
   }
   return true;
+}
+
+bool ExternalMemoryOp::tryExecute(
+    llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
+    llvm::DenseMap<unsigned, unsigned> &memoryMap,
+    llvm::DenseMap<mlir::Value, double> &timeMap,
+    std::vector<std::vector<llvm::Any>> &store,
+    std::vector<mlir::Value> &scheduleList) {
+  unsigned buffer = llvm::any_cast<unsigned>(valueMap[memref()]);
+  return executeMemoryOperation(*this, buffer, 1, valueMap, memoryMap, timeMap,
+                                store, scheduleList);
 }
 
 bool StoreOp::tryExecute(llvm::DenseMap<mlir::Value, llvm::Any> &valueMap,
