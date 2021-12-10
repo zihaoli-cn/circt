@@ -225,7 +225,7 @@ raw_ostream &operator<<(raw_ostream &os, const LatticeValue &lattice) {
   if (lattice.isConstant())
     return os << "<constant: " << lattice.getConstant() << ">";
   if (lattice.isOverdefined())
-    return os << "<over>";
+    return os << "<overdefined>";
 
   llvm_unreachable("Lattice must have exactly one state");
 }
