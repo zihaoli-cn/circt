@@ -28,14 +28,11 @@ static bool isWireOrReg(Operation *op) {
   return isa<WireOp>(op) || isa<RegResetOp>(op) || isa<RegOp>(op);
 }
 
-/// Return true if this is a subelement access.
-static bool isSubelementAccess(Operation *op) {
-  return isa<SubindexOp, SubfieldOp>(op);
-}
-
 /// Return true if this is a root value. If a defining op is null, then this is
 /// an argument so we regard it as a root value.
-static bool isRoot(Operation *op) { return !op || !isSubelementAccess(op); }
+static bool isRoot(Operation *op) {
+  return !op || !isa<SubindexOp, SubfieldOp>(op);
+}
 static bool isRoot(FieldRef fieldRef) {
   return isRoot(fieldRef.getValue().getDefiningOp());
 }
@@ -43,12 +40,6 @@ static bool isRoot(FieldRef fieldRef) {
 /// Return true if this is a wire or register access we're allowed to delete.
 static bool isDeletableWireOrReg(Operation *op) {
   return isWireOrReg(op) && !hasDontTouch(op);
-}
-
-/// Return true if a type is possible to track. Currently, we allow passive
-/// types.
-static bool isTrackableType(Type type) {
-  return type.cast<FIRRTLType>().isPassive();
 }
 
 /// This function recursively applies `fn` to leaf ground types of `type`.
@@ -631,9 +622,6 @@ void IMConstPropPass::markBlockExecutable(Block *block) {
 void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
 
   auto resultValue = wireOrReg->getResult(0);
-  if (!isTrackableType(resultValue.getType()))
-    return markOverdefined(resultValue);
-
   // Otherwise, this starts out as InvalidValue and is upgraded by
   // connects.
   auto &destTypes = getLeafFieldIDsAndGroundTypes(resultValue.getType());
@@ -645,7 +633,6 @@ void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
 }
 
 void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
-  assert(isTrackableType(regReset.getType()) && "register is always trackable");
   // The reset value may be known - if so, merge it in.
   auto &destTypes = getLeafFieldIDsAndGroundTypes(regReset.getType());
 
@@ -779,7 +766,7 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
 
   // TODO: Generalize to subaccesses etc when we have a field sensitive
   // model.
-  if (!isTrackableType(destType)) {
+  if (!destType.isPassive()) {
     connect.emitError("non-ground type connect unhandled by IMConstProp");
     return;
   }
