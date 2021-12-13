@@ -433,10 +433,10 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     auto &entry = typeToLeafFieldIDsAndGroundTypes[type];
     if (!entry.empty())
       return entry;
-    auto fn = [&entry](unsigned fieldID, FIRRTLType type) {
-      entry.push_back({fieldID, type});
-    };
-    foreachFIRRTLGroundType(type.cast<FIRRTLType>(), fn);
+    foreachFIRRTLGroundType(type.cast<FIRRTLType>(),
+                            [&entry](unsigned fieldID, FIRRTLType type) {
+                              entry.push_back({fieldID, type});
+                            });
     return entry;
   }
 
