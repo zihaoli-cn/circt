@@ -76,12 +76,6 @@ foreachFIRRTLGroundType(FIRRTLType type,
 
 namespace {
 
-// Printer for FieldRef.
-raw_ostream &operator<<(raw_ostream &os, const FieldRef &fieldRef) {
-  os << getFieldName(fieldRef);
-  return os;
-}
-
 /// This class represents a single lattice value. A lattive value corresponds to
 /// the various different states that a value in the SCCP dataflow analysis can
 /// take. See 'Kind' below for more details on the different states a value can
