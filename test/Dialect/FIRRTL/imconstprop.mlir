@@ -730,10 +730,82 @@ firrtl.circuit "AggregateAsyncReset" {
     // Check that %init is not deleted.
     // CHECK: %init = firrtl.wire
 
-    // Check that %res1 is not folded.
+    // Check that %res1 is not folded because reg[0] is either 0 or 1.
     // CHECK:      firrtl.connect %res1, %2 : !firrtl.uint<3>, !firrtl.uint<3>
     // CHECK-NEXT: firrtl.connect %res2, %c2_ui3_2 : !firrtl.uint<3>, !firrtl.uint<3>
   }
 }
 
 // -----
+
+firrtl.circuit "AggregateRegReset" {
+  // CHECK-LABEL: @AggregateRegReset
+  firrtl.module @AggregateRegReset(in %clock: !firrtl.clock, in %reset: !firrtl.uint<1>, out %out: !firrtl.uint<1>) {
+    %init = firrtl.wire : !firrtl.vector<uint<1>, 1>
+    %0 = firrtl.subindex %init[0] : !firrtl.vector<uint<1>, 1>
+    %true = firrtl.constant 1 : !firrtl.uint<1>
+    firrtl.connect %0, %true : !firrtl.uint<1>, !firrtl.uint<1>
+    %reg = firrtl.regreset %clock, %reset, %init  : !firrtl.uint<1>, !firrtl.vector<uint<1>, 1>, !firrtl.vector<uint<1>, 1>
+    %1 = firrtl.subindex %reg[0] : !firrtl.vector<uint<1>, 1>
+    firrtl.connect %1, %true : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %out, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+    // Check that %init is not deleted.
+    // CHECK: %init = firrtl.wire
+    // CHECK: firrtl.connect %out, %[[c1:c1_ui1.*]] : !firrtl.uint<1>, !firrtl.uint<1>
+  }
+}
+
+// -----
+
+firrtl.circuit "DontTouchAggregate" {
+  firrtl.module @DontTouchAggregate(in %clock: !firrtl.clock, out %out1: !firrtl.uint<1>, out %out2: !firrtl.uint<1>) {
+    // fieldID 1 means the first element. Check that we don't propagate througth it.
+    %init = firrtl.wire {annotations = [#firrtl.subAnno<fieldID = 1, {class = "firrtl.transforms.DontTouchAnnotation"}>]}
+                        : !firrtl.vector<uint<1>, 2>
+    %0 = firrtl.subindex %init[0] : !firrtl.vector<uint<1>, 2>
+    %1 = firrtl.subindex %init[1] : !firrtl.vector<uint<1>, 2>
+    %true = firrtl.constant 1 : !firrtl.uint<1>
+    firrtl.connect %0, %true : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %1, %true : !firrtl.uint<1>, !firrtl.uint<1>
+
+    firrtl.connect %out1, %0 : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %out2, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+    // Make sure that we don't propagate through %init[0].
+    // FIXME: Currently, we are not propagating through %init[1] too because
+    // we don't look at DontTouchAnnotation in the field sensitive way.
+
+    // CHECK:      firrtl.connect %0, %c1_ui1 : !firrtl.uint<1>, !firrtl.uint<1>
+    // CHECK-NEXT: firrtl.connect %1, %c1_ui1 : !firrtl.uint<1>, !firrtl.uint<1>
+    // CHECK-NEXT: firrtl.connect %out1, %0 : !firrtl.uint<1>, !firrtl.uint<1>
+    // CHECK-NEXT: firrtl.connect %out2, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+  }
+}
+
+// -----
+
+firrtl.circuit "OutPortTop" {
+  // fieldID 1 means the first element. Check that we don't propagate througth it.
+  firrtl.module @OutPortChild(out %out: !firrtl.vector<uint<1>, 2> [#firrtl.subAnno<fieldID = 1, {class = "firrtl.transforms.DontTouchAnnotation"}>]) {
+    %c0_ui1 = firrtl.constant 0 : !firrtl.uint<1>
+    %0 = firrtl.subindex %out[0] : !firrtl.vector<uint<1>, 2>
+    %1 = firrtl.subindex %out[1] : !firrtl.vector<uint<1>, 2>
+    firrtl.connect %0, %c0_ui1 : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %1, %c0_ui1 : !firrtl.uint<1>, !firrtl.uint<1>
+  }
+  // CHECK-LABEL: firrtl.module @OutPortTop
+  firrtl.module @OutPortTop(out %out1: !firrtl.uint<1>, out %out2: !firrtl.uint<1>) {
+    %c_out = firrtl.instance c @OutPortChild(out out: !firrtl.vector<uint<1>, 2>)
+    %0 = firrtl.subindex %c_out[0] : !firrtl.vector<uint<1>, 2>
+    %1 = firrtl.subindex %c_out[1] : !firrtl.vector<uint<1>, 2>
+    firrtl.connect %out1, %0 : !firrtl.uint<1>, !firrtl.uint<1>
+    firrtl.connect %out2, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+    // Make sure that we don't propagate through %c_out[0].
+    // FIXME: Currently, we are not propagating through %init[1] too because
+    // we don't look at DontTouchAnnotation in the field sensitive way.
+
+    // CHECK:      %0 = firrtl.subindex %c_out[0] : !firrtl.vector<uint<1>, 2>
+    // CHECK-NEXT: %1 = firrtl.subindex %c_out[1] : !firrtl.vector<uint<1>, 2>
+    // CHECK-NEXT: firrtl.connect %out1, %0 : !firrtl.uint<1>, !firrtl.uint<1>
+    // CHECK-NEXT: firrtl.connect %out2, %1 : !firrtl.uint<1>, !firrtl.uint<1>
+  }
+}

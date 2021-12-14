@@ -882,7 +882,6 @@ void IMConstPropPass::visitOperation(Operation *op, FieldRef changedValue) {
   SmallVector<Attribute, 8> operandConstants;
   operandConstants.reserve(op->getNumOperands());
   for (Value operand : op->getOperands()) {
-    // We can't handle non-ground types here.
     auto &operandLattice = latticeValues[getFieldRefFromValue(operand)];
 
     // If the operand is an unknown value, then we generally don't want to
