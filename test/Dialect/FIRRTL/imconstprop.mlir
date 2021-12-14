@@ -800,7 +800,7 @@ firrtl.circuit "OutPortTop" {
     firrtl.connect %out1, %0 : !firrtl.uint<1>, !firrtl.uint<1>
     firrtl.connect %out2, %1 : !firrtl.uint<1>, !firrtl.uint<1>
     // Make sure that we don't propagate through %c_out[0].
-    // FIXME: Currently, we are not propagating through %init[1] too because
+    // FIXME: Currently, we are not propagating through %c_out[1] too because
     // we don't look at DontTouchAnnotation in the field sensitive way.
 
     // CHECK:      %0 = firrtl.subindex %c_out[0] : !firrtl.vector<uint<1>, 2>
