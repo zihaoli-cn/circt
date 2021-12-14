@@ -231,15 +231,10 @@ struct IMConstPropPass : public IMConstPropBase<IMConstPropPass> {
     return it != latticeValues.end() && it->second.isOverdefined();
   }
 
-  // Value is regarded as overdefined if one of lattice values associated with
-  // the value is overdefined.
   bool isOverdefined(Value value) const {
-    auto [root, index, size] = getRootValueWithCorrespondingLeafIDRange(value);
-    auto types = getLeafFieldIDsAndGroundTypes(root.getType());
-    for (unsigned i = 0; i < size; ++i)
-      if (isOverdefined({root, types[index + i].first}))
-        return true;
-    return false;
+    assert(value.getType().cast<FIRRTLType>().isGround() &&
+           "don't call this function for non-grund types");
+    return isOverdefined(getFieldRefFromValue(value));
   }
 
   /// Mark the given fieldRef as overdefined. This means that we cannot refine a
@@ -873,7 +868,12 @@ void IMConstPropPass::visitOperation(Operation *op, FieldRef changedValue) {
 
   // If all of the results of this operation are already overdefined (or if
   // there are no results) then bail out early: we've converged.
-  auto isOverdefinedFn = [&](Value value) { return isOverdefined(value); };
+  auto isOverdefinedFn = [&](Value value) {
+    assert(value.getType().cast<FIRRTLType>().isGround() &&
+           "all operands must have ground types here");
+    return isOverdefined(value);
+  };
+
   if (llvm::all_of(op->getResults(), isOverdefinedFn))
     return;
 
@@ -883,8 +883,6 @@ void IMConstPropPass::visitOperation(Operation *op, FieldRef changedValue) {
   operandConstants.reserve(op->getNumOperands());
   for (Value operand : op->getOperands()) {
     // We can't handle non-ground types here.
-    if (!operand.getType().cast<FIRRTLType>().isGround())
-      return;
     auto &operandLattice = latticeValues[getFieldRefFromValue(operand)];
 
     // If the operand is an unknown value, then we generally don't want to
