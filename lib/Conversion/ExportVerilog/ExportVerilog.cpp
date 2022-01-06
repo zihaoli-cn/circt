@@ -506,6 +506,7 @@ static bool constructAccessPathToFieldID(SmallString<16> &path, Type type,
           unsigned size = path.size();
           for (auto elem : structTy.getElements()) {
             // FIXME: Rename invalid verilog field names.
+            path.append("field_");
             path.append(elem.name);
             fieldID--;
             if (constructPath(elem.type))

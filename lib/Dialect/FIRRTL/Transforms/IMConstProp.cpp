@@ -869,8 +869,8 @@ void IMConstPropPass::visitOperation(Operation *op, FieldRef changedValue) {
   // If all of the results of this operation are already overdefined (or if
   // there are no results) then bail out early: we've converged.
   auto isOverdefinedFn = [&](Value value) {
-    assert(value.getType().cast<FIRRTLType>().isGround() &&
-           "all operands must have ground types here");
+    if (!value.getType().cast<FIRRTLType>().isGround())
+      return false;
     return isOverdefined(value);
   };
 
