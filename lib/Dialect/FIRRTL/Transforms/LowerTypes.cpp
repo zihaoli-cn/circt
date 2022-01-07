@@ -36,6 +36,7 @@
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Threading.h"
 #include "llvm/ADT/APSInt.h"
+#include "llvm/Support/Debug.h"
 
 using namespace circt;
 using namespace firrtl;
@@ -89,13 +90,27 @@ static bool hasZeroBitWidth(FIRRTLType type) {
       });
 }
 
+static bool hasClock(FIRRTLType type) {
+  return TypeSwitch<FIRRTLType, bool>(type)
+      .Case<BundleType>([&](auto bundle) {
+        for (size_t i = 0, e = bundle.getNumElements(); i < e; ++i) {
+          auto elt = bundle.getElement(i);
+          if (elt.name == "clock")
+            return true;
+        }
+        return false;
+      })
+      .Default([](auto groundType) { return false; });
+}
+
 /// Return true if we can preserve the aggregate type. We can a preserve the
 /// type iff (i) the type is not passive, (ii) the type doesn't contain analog
 /// and (iii) type don't contain zero bitwidth.
 static bool isPreservableAggregateType(Type type) {
   auto firrtlType = type.cast<FIRRTLType>();
   return firrtlType.isPassive() && !firrtlType.containsAnalog() &&
-         !hasZeroBitWidth(firrtlType);
+         !hasZeroBitWidth(firrtlType) && firrtlType.getMaxFieldID() == 2 &&
+         hasClock(firrtlType);
 }
 
 /// Return true if we can preserve the arguments of the given module.
@@ -426,7 +441,7 @@ bool TypeLoweringVisitor::lowerProducer(
   auto srcType = op->getResult(0).getType().cast<FIRRTLType>();
   SmallVector<FlatBundleFieldEntry, 8> fieldTypes;
 
-  if (!peelType(srcType, fieldTypes, preserveAggregate))
+  if (!peelType(srcType, fieldTypes, false))
     return false;
 
   SmallVector<Value> lowered;
