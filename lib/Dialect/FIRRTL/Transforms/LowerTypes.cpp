@@ -109,8 +109,9 @@ static bool hasClock(FIRRTLType type) {
 static bool isPreservableAggregateType(Type type) {
   auto firrtlType = type.cast<FIRRTLType>();
   return firrtlType.isPassive() && !firrtlType.containsAnalog() &&
-         !hasZeroBitWidth(firrtlType) && firrtlType.getMaxFieldID() == 2 &&
-         hasClock(firrtlType);
+         !hasZeroBitWidth(firrtlType);
+  //  && firrtlType.getMaxFieldID() < 100; // &&
+  // hasClock(firrtlType);
 }
 
 /// Return true if we can preserve the arguments of the given module.
@@ -440,17 +441,18 @@ bool TypeLoweringVisitor::lowerProducer(
   // If this is not a bundle, there is nothing to do.
   auto srcType = op->getResult(0).getType().cast<FIRRTLType>();
   SmallVector<FlatBundleFieldEntry, 8> fieldTypes;
+  SmallString<16> loweredName;
+  StringAttr innerSym = op->getAttrOfType<StringAttr>("inner_sym");
 
   if (!peelType(srcType, fieldTypes, false))
     return false;
 
-  SmallVector<Value> lowered;
-  // Loop over the leaf aggregates.
-  SmallString<16> loweredName;
-  StringAttr innerSym = op->getAttrOfType<StringAttr>("inner_sym");
   if (auto nameAttr = op->getAttr("name"))
     if (auto nameStrAttr = nameAttr.dyn_cast<StringAttr>())
       loweredName = nameStrAttr.getValue();
+
+  SmallVector<Value> lowered;
+  // Loop over the leaf aggregates.
   auto baseNameLen = loweredName.size();
   auto oldAnno = op->getAttr("annotations").dyn_cast_or_null<ArrayAttr>();
 
