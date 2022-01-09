@@ -786,9 +786,11 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
   if (srcValue.isUnknown())
     return;
 
+  auto dest = getFieldRefFromValue(connect.dest()).getValue();
+  auto destFieldID = getFieldRefFromValue(connect.dest()).getFieldID();
   // Driving result ports propagates the value to each instance using the
   // module.
-  if (auto blockArg = connect.dest().dyn_cast<BlockArgument>()) {
+  if (auto blockArg = dest.dyn_cast<BlockArgument>()) {
     if (!AnnotationSet::get(blockArg).hasDontTouch())
       for (auto userOfResultPort : resultPortToInstanceResultMapping[blockArg])
         mergeLatticeValue({userOfResultPort, fieldID}, srcValue);
@@ -797,11 +799,12 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
     return;
   }
 
-  auto dest = connect.dest().cast<mlir::OpResult>();
+  // if (!dest.getDefiningOp())
+  //   llvm::dbgs() << dest << "\n";
 
   // For wires and registers, we drive the value of the wire itself, which
   // automatically propagates to users.
-  if (isWireOrReg(dest.getOwner()))
+  if (dest.getDefiningOp() && isWireOrReg(dest.getDefiningOp()))
     return mergeLatticeValue({connect.dest(), fieldID}, srcValue);
 
   // Driving an instance argument port drives the corresponding argument of the
@@ -814,24 +817,29 @@ void IMConstPropPass::visitConnect(ConnectOp connect, FieldRef changedValue) {
     if (!module)
       return;
 
-    BlockArgument modulePortVal = module.getArgument(dest.getResultNumber());
-    return mergeLatticeValue({modulePortVal, fieldID}, srcValue);
+    BlockArgument modulePortVal =
+        module.getArgument(dest.cast<mlir::OpResult>().getResultNumber());
+    return mergeLatticeValue({modulePortVal, destFieldID}, srcValue);
   }
-
   // Driving a memory result is ignored because these are always treated as
   // overdefined.
-  if (auto subfield = dest.getDefiningOp<SubfieldOp>()) {
-    if (subfield.getOperand().getDefiningOp<MemOp>())
-      return;
+  if (dest.getDefiningOp<MemOp>())
+    return;
+  /*
+  if (auto subfield = connect.dest.getDefiningOp<SubfieldOp>()) {
+
+    // llvm_unreachable();
     return mergeLatticeValue({subfield, fieldID}, srcValue);
   }
 
   if (auto subindex = dest.getDefiningOp<SubindexOp>())
     return mergeLatticeValue({subindex, fieldID}, srcValue);
+    */
 
   connect.emitError("connect unhandled by IMConstProp")
           .attachNote(connect.dest().getLoc())
       << "connect destination is here";
+  llvm::dbgs() << connect.dest() << "\n";
 }
 
 void IMConstPropPass::visitPartialConnect(PartialConnectOp partialConnect,

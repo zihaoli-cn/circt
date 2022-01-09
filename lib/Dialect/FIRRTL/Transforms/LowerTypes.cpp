@@ -218,9 +218,12 @@ static Attribute updateAnnotationFieldID(MLIRContext *ctxt, Attribute attr,
 
 /// Copy annotations from \p annotations to \p loweredAttrs, except annotations
 /// with "target" key, that do not match the field suffix.
+/// Also if the target contains a DontTouch, remove it and set the flag.
 static ArrayAttr filterAnnotations(MLIRContext *ctxt, ArrayAttr annotations,
                                    FIRRTLType srcType,
-                                   FlatBundleFieldEntry field) {
+                                   FlatBundleFieldEntry field,
+                                   bool &hasDontTouch) {
+  hasDontTouch = false;
   SmallVector<Attribute> retval;
   if (!annotations || annotations.empty())
     return ArrayAttr::get(ctxt, retval);
@@ -243,6 +246,11 @@ static ArrayAttr filterAnnotations(MLIRContext *ctxt, ArrayAttr annotations,
         } else {
           // Otherwise, if the current field is exactly the target, degenerate
           // the sub-annotation to a normal annotation.
+          if (Annotation(opAttr).getClass() ==
+              "firrtl.transforms.DontTouchAnnotation") {
+            hasDontTouch = true;
+            continue;
+          }
           retval.push_back(subAnno.getAnnotations());
         }
       }
@@ -270,6 +278,10 @@ static MemOp cloneMemWithNewType(ImplicitLocOpBuilder *b, MemOp op,
       ports, op.readLatency(), op.writeLatency(), op.depth(), op.ruw(),
       portNames, (op.name() + field.suffix).str(), op.annotations().getValue(),
       op.portAnnotations().getValue(), op.inner_symAttr());
+  if (op.inner_sym())
+    newMem.inner_symAttr(
+        StringAttr::get(b->getContext(), op.inner_symAttr().getValue() +
+                                             (op.name() + field.suffix)));
 
   SmallVector<Attribute> newAnnotations;
   for (size_t portIdx = 0, e = newMem.getNumResults(); portIdx < e; ++portIdx) {
@@ -324,15 +336,18 @@ namespace {
 // not.
 struct TypeLoweringVisitor : public FIRRTLVisitor<TypeLoweringVisitor, bool> {
 
-  TypeLoweringVisitor(MLIRContext *context, bool f, bool p)
-      : context(context), flattenAggregateMemData(f), preserveAggregate(p) {}
+  TypeLoweringVisitor(MLIRContext *context, bool f, bool p, unsigned moduleID)
+      : context(context), flattenAggregateMemData(f), preserveAggregate(p),
+        moduleID(moduleID) {}
   using FIRRTLVisitor<TypeLoweringVisitor, bool>::visitDecl;
   using FIRRTLVisitor<TypeLoweringVisitor, bool>::visitExpr;
   using FIRRTLVisitor<TypeLoweringVisitor, bool>::visitStmt;
 
   /// If the referenced operation is a FModuleOp or an FExtModuleOp, perform
   /// type lowering on all operations.
-  void lowerModule(Operation *op);
+  void lowerModule(Operation *op, unsigned index);
+  const unsigned moduleID;
+  unsigned id = 0;
 
   bool lowerArg(Operation *module, size_t argIndex,
                 SmallVectorImpl<PortInfo> &newArgs,
@@ -444,8 +459,22 @@ bool TypeLoweringVisitor::lowerProducer(
   SmallString<16> loweredName;
   StringAttr innerSym = op->getAttrOfType<StringAttr>("inner_sym");
 
-  if (!peelType(srcType, fieldTypes, false))
+  auto oldAnno = op->getAttr("annotations").dyn_cast_or_null<ArrayAttr>();
+
+  if (!peelType(srcType, fieldTypes, false)) {
+    if (oldAnno && !innerSym) {
+      for (auto opAttr : oldAnno) {
+        if (Annotation(opAttr).getClass() ==
+            "firrtl.transforms.DontTouchAnnotation") {
+          SmallString<16> name("Anno_" + std::to_string(moduleID) + "_" +
+                               std::to_string(id++));
+          op->setAttr("inner_sym", StringAttr::get(op->getContext(), name));
+          break;
+        }
+      }
+    }
     return false;
+  }
 
   if (auto nameAttr = op->getAttr("name"))
     if (auto nameStrAttr = nameAttr.dyn_cast<StringAttr>())
@@ -454,25 +483,25 @@ bool TypeLoweringVisitor::lowerProducer(
   SmallVector<Value> lowered;
   // Loop over the leaf aggregates.
   auto baseNameLen = loweredName.size();
-  auto oldAnno = op->getAttr("annotations").dyn_cast_or_null<ArrayAttr>();
 
   for (auto field : fieldTypes) {
     if (!loweredName.empty()) {
       loweredName.resize(baseNameLen);
       loweredName += field.suffix;
     }
+    bool hasDontTouch = false;
     // For all annotations on the parent op, filter them based on the target
     // attribute.
     ArrayAttr loweredAttrs =
-        filterAnnotations(context, oldAnno, srcType, field);
+        filterAnnotations(context, oldAnno, srcType, field, hasDontTouch);
     auto newOp = clone(field, loweredName, loweredAttrs);
     // Carry over the inner_sym name, if present.
-    if (innerSym) {
-      if (!lowered.empty())
-        op->emitError("replication due to type lowering renders @")
-            << innerSym.getValue() << " ambiguous";
-      newOp->setAttr("inner_sym", innerSym);
-    }
+    if (innerSym)
+      newOp->setAttr("inner_sym", StringAttr::get(context, innerSym.getValue() +
+                                                               loweredName));
+    if (hasDontTouch)
+      newOp->setAttr("inner_sym", StringAttr::get(context, loweredName));
+
     lowered.push_back(newOp->getResult(0));
   }
 
@@ -497,7 +526,30 @@ void TypeLoweringVisitor::processUsers(Value val, ArrayRef<Value> mapping) {
   }
 }
 
-void TypeLoweringVisitor::lowerModule(Operation *op) {
+void TypeLoweringVisitor::lowerModule(Operation *op, unsigned index) {
+  /*
+  unsigned id = 0;
+  op->walk([&](Operation *op) {
+    return;
+    if (isa<FModuleOp, FExtModuleOp>(op))
+      return;
+    StringAttr innerSym = op->getAttrOfType<StringAttr>("inner_sym");
+    if (innerSym)
+      return;
+
+    auto attr = op->getAttr("annotations").dyn_cast_or_null<ArrayAttr>();
+    if (attr) {
+      for (auto opAttr : attr) {
+        if (Annotation(opAttr).getClass() ==
+            "firrtl.transforms.DontTouchAnnotation") {
+          SmallString<16> name("Anno_" + std::to_string(index) + "_" +
+                               std::to_string(id++));
+          op->setAttr("inner_sym", StringAttr::get(op->getContext(), name));
+          return;
+        }
+      }
+    }
+  });*/
   if (auto module = dyn_cast<FModuleOp>(op))
     visitDecl(module);
   else if (auto extModule = dyn_cast<FExtModuleOp>(op))
@@ -522,16 +574,21 @@ TypeLoweringVisitor::addArg(Operation *module, unsigned insertPt,
   auto name =
       builder->getStringAttr(oldArg.name.getValue().str() + field.suffix.str());
 
+  bool hasDontTouch = false;
   // Populate the new arg attributes.
   auto newAnnotations = filterAnnotations(
-      context, oldArg.annotations.getArrayAttr(), srcType, field);
+      context, oldArg.annotations.getArrayAttr(), srcType, field, hasDontTouch);
 
   // Flip the direction if the field is an output.
   auto direction = (Direction)((unsigned)oldArg.direction ^ field.isOutput);
 
+  StringAttr sym = oldArg.sym;
+  if (!sym || sym.getValue().empty())
+    if (hasDontTouch)
+      sym = StringAttr::get(builder->getContext(), "sym" + name.getValue());
   return std::make_pair(newValue,
-                        PortInfo{name, field.type, direction, oldArg.sym,
-                                 oldArg.loc, AnnotationSet(newAnnotations)});
+                        PortInfo{name, field.type, direction, sym, oldArg.loc,
+                                 AnnotationSet(newAnnotations)});
 }
 
 // Lower arguments with bundle type by flattening them.
@@ -543,8 +600,23 @@ bool TypeLoweringVisitor::lowerArg(Operation *module, size_t argIndex,
   // Flatten any bundle types.
   SmallVector<FlatBundleFieldEntry> fieldTypes;
   auto srcType = newArgs[argIndex].type.cast<FIRRTLType>();
-  if (!peelType(srcType, fieldTypes, allowedToPreserveAggregate))
+  if (!peelType(srcType, fieldTypes, allowedToPreserveAggregate)) {
+    auto oldAnno = newArgs[argIndex].annotations;
+    auto innerSym = newArgs[argIndex].sym;
+    if (!innerSym || innerSym.getValue().empty()) {
+      for (auto opAttr : oldAnno) {
+        if (Annotation(opAttr).getClass() ==
+            "firrtl.transforms.DontTouchAnnotation") {
+          SmallString<16> name("Anno_" + std::to_string(moduleID) + "_" +
+                               std::to_string(id++));
+          newArgs[argIndex].sym = StringAttr::get(module->getContext(), name);
+          // op->setAttr("inner_sym", StringAttr::get(op->getContext(), name));
+          break;
+        }
+      }
+    }
     return false;
+  }
 
   for (auto field : llvm::enumerate(fieldTypes)) {
     auto newValue = addArg(module, 1 + argIndex + field.index(), srcType,
@@ -845,11 +917,6 @@ bool TypeLoweringVisitor::visitDecl(MemOp op) {
     for (auto field : fields)
       newMemories.push_back(cloneMemWithNewType(builder, op, field));
   }
-  // Emit an error if the memory had an `inner_sym` that was replicated across
-  // multiple memories.
-  if (newMemories.size() > 1 && op.inner_symAttr())
-    op->emitError("replication due to type lowering renders @")
-        << op.inner_symAttr().getValue() << " ambiguous";
   // Hook up the new memories to the wires the old memory was replaced with.
   for (size_t index = 0, rend = op.getNumResults(); index < rend; ++index) {
     auto result = oldPorts[index];
@@ -1222,6 +1289,7 @@ bool TypeLoweringVisitor::visitDecl(InstanceOp op) {
       isModuleAllowedToPreserveAggregate(op.getReferencedModule());
 
   endFields.push_back(0);
+  bool hasDontTouch = false;
   for (size_t i = 0, e = op.getNumResults(); i != e; ++i) {
     auto srcType = op.getType(i).cast<FIRRTLType>();
 
@@ -1241,9 +1309,10 @@ bool TypeLoweringVisitor::visitDecl(InstanceOp op) {
         newDirs.push_back(direction::get((unsigned)oldDir ^ field.isOutput));
         newNames.push_back(builder->getStringAttr(oldName + field.suffix));
         resultTypes.push_back(field.type);
-        newPortAnno.push_back(filterAnnotations(
+        auto annos = filterAnnotations(
             context, oldPortAnno[i].dyn_cast_or_null<ArrayAttr>(), srcType,
-            field));
+            field, hasDontTouch);
+        newPortAnno.push_back(annos);
       }
     }
     endFields.push_back(resultTypes.size());
@@ -1251,14 +1320,17 @@ bool TypeLoweringVisitor::visitDecl(InstanceOp op) {
 
   if (skip)
     return false;
-
+  auto sym = op.inner_symAttr();
+  if (!sym || sym.getValue().empty())
+    if (hasDontTouch)
+      sym = StringAttr::get(builder->getContext(),
+                            "sym" + op.nameAttr().getValue());
   // FIXME: annotation update
   auto newInstance = builder->create<InstanceOp>(
       resultTypes, op.moduleNameAttr(), op.nameAttr(),
       direction::packAttribute(context, newDirs),
       builder->getArrayAttr(newNames), op.annotations(),
-      builder->getArrayAttr(newPortAnno), op.lowerToBindAttr(),
-      op.inner_symAttr());
+      builder->getArrayAttr(newPortAnno), op.lowerToBindAttr(), sym);
 
   SmallVector<Value> lowered;
   for (size_t aggIndex = 0, eAgg = op.getNumResults(); aggIndex != eAgg;
@@ -1344,8 +1416,8 @@ void LowerTypesPass::runOnOperation() {
 
   mlir::parallelForEachN(&getContext(), 0, ops.size(), [&](auto index) {
     TypeLoweringVisitor(&getContext(), flattenAggregateMemData,
-                        preserveAggregate)
-        .lowerModule(ops[index]);
+                        preserveAggregate, index)
+        .lowerModule(ops[index], index);
   });
 }
 

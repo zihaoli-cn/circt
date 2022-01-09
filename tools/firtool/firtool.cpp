@@ -318,146 +318,152 @@ processBuffer(MLIRContext &context, TimingScope &ts, llvm::SourceMgr &sourceMgr,
   pm.enableVerifier(verifyPasses);
   pm.enableTiming(ts);
   applyPassManagerCLOptions(pm);
+  auto f = [&]() {
+    // return;
+    if (newAnno)
+      pm.nest<firrtl::CircuitOp>().addPass(
+          firrtl::createLowerFIRRTLAnnotationsPass(
+              disableAnnotationsUnknown, disableAnnotationsClassless));
 
-  if (newAnno)
-    pm.nest<firrtl::CircuitOp>().addPass(
-        firrtl::createLowerFIRRTLAnnotationsPass(disableAnnotationsUnknown,
-                                                 disableAnnotationsClassless));
-
-  if (!disableOptimization) {
-    pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
-        createCSEPass());
-  }
-
-  if (lowerCHIRRTL)
-    pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
-        firrtl::createLowerCHIRRTLPass());
-
-  // Width inference creates canonicalization opportunities.
-  if (inferWidths)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createInferWidthsPass());
-
-  if (inferResets)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createInferResetsPass());
-
-  if (prefixModules)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createPrefixModulesPass());
-
-  if (blackBoxMemory)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createBlackBoxMemoryPass());
-
-  // The input mlir file could be firrtl dialect so we might need to clean
-  // things up.
-  if (lowerTypes) {
-    pm.addNestedPass<firrtl::CircuitOp>(
-        firrtl::createLowerFIRRTLTypesPass(replSeqMem, preserveAggregate));
-    // Only enable expand whens if lower types is also enabled.
-    if (expandWhens) {
-      auto &modulePM = pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>();
-      modulePM.addPass(firrtl::createExpandWhensPass());
-      modulePM.addPass(firrtl::createRemoveResetsPass());
-    }
-  }
-
-  if (checkCombCycles)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createCheckCombCyclesPass());
-
-  // If we parsed a FIRRTL file and have optimizations enabled, clean it up.
-  if (!disableOptimization)
-    pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
-        createSimpleCanonicalizerPass());
-
-  if (inliner)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createInlinerPass());
-
-  bool nonConstAsyncResetValueIsError = false;
-  if (imconstprop && !disableOptimization) {
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createIMConstPropPass());
-  }
-
-  // Read black box source files into the IR.
-  StringRef blackBoxRoot = blackBoxRootPath.empty()
-                               ? llvm::sys::path::parent_path(inputFilename)
-                               : blackBoxRootPath;
-  pm.nest<firrtl::CircuitOp>().addPass(firrtl::createBlackBoxReaderPass(
-      blackBoxRoot, blackBoxRootResourcePath.empty()
-                        ? blackBoxRoot
-                        : blackBoxRootResourcePath));
-
-  if (grandCentral) {
-    auto &circuitPM = pm.nest<firrtl::CircuitOp>();
-    circuitPM.addPass(firrtl::createGrandCentralPass());
-    circuitPM.addPass(firrtl::createGrandCentralTapsPass());
-    circuitPM.nest<firrtl::FModuleOp>().addPass(
-        firrtl::createGrandCentralSignalMappingsPass());
-  }
-
-  // The above passes, IMConstProp in particular, introduce additional
-  // canonicalization opportunities that we should pick up here before we
-  // proceed to output-specific pipelines.
-  if (!disableOptimization)
-    pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
-        createSimpleCanonicalizerPass());
-
-  if (emitMetadata)
-    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createCreateSiFiveMetadataPass(
-        replSeqMem, replSeqMemCircuit, replSeqMemFile));
-
-  if (emitOMIR)
-    pm.nest<firrtl::CircuitOp>().addPass(
-        firrtl::createEmitOMIRPass(omirOutFile));
-
-  // Lower if we are going to verilog or if lowering was specifically requested.
-  if (outputFormat != OutputIRFir) {
-    pm.addPass(createLowerFIRRTLToHWPass(enableAnnotationWarning.getValue(),
-                                         nonConstAsyncResetValueIsError));
-    pm.addPass(sv::createHWMemSimImplPass(replSeqMem, ignoreReadEnableMem));
-
-    if (extractTestCode)
-      pm.addPass(sv::createSVExtractTestCodePass());
-
-    // If enabled, run the optimizer.
     if (!disableOptimization) {
-      auto &modulePM = pm.nest<hw::HWModuleOp>();
-      modulePM.addPass(createCSEPass());
-      modulePM.addPass(createSimpleCanonicalizerPass());
-      modulePM.addPass(sv::createHWCleanupPass());
-    }
-  }
-
-  // Add passes specific to Verilog emission if we're going there.
-  if (outputFormat == OutputVerilog || outputFormat == OutputSplitVerilog ||
-      outputFormat == OutputIRVerilog) {
-    // Legalize unsupported operations within the modules.
-    pm.nest<hw::HWModuleOp>().addPass(sv::createHWLegalizeModulesPass());
-
-    // Tidy up the IR to improve verilog emission quality.
-    if (!disableOptimization) {
-      auto &modulePM = pm.nest<hw::HWModuleOp>();
-      modulePM.addPass(sv::createPrettifyVerilogPass());
+      pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
+          createCSEPass());
     }
 
-    // Emit a single file or multiple files depending on the output format.
-    switch (outputFormat) {
-    default:
-      llvm_unreachable("can't reach this");
-    case OutputVerilog:
-      pm.addPass(createExportVerilogPass(outputFile.getValue()->os()));
-      break;
-    case OutputSplitVerilog:
-      pm.addPass(createExportSplitVerilogPass(outputFilename));
-      break;
-    case OutputIRVerilog:
-      // Run the ExportVerilog pass to get its lowering, but discard the output.
-      pm.addPass(createExportVerilogPass(llvm::nulls()));
-      break;
+    if (lowerCHIRRTL)
+      pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
+          firrtl::createLowerCHIRRTLPass());
+
+    // Width inference creates canonicalization opportunities.
+    if (inferWidths)
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createInferWidthsPass());
+
+    if (inferResets)
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createInferResetsPass());
+
+    if (prefixModules)
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createPrefixModulesPass());
+
+    if (blackBoxMemory)
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createBlackBoxMemoryPass());
+
+    // The input mlir file could be firrtl dialect so we might need to clean
+    // things up.
+    if (lowerTypes) {
+      pm.addNestedPass<firrtl::CircuitOp>(
+          firrtl::createLowerFIRRTLTypesPass(replSeqMem, preserveAggregate));
+      // Only enable expand whens if lower types is also enabled.
+      if (expandWhens) {
+        auto &modulePM = pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>();
+        modulePM.addPass(firrtl::createExpandWhensPass());
+        modulePM.addPass(firrtl::createRemoveResetsPass());
+      }
     }
 
-    // Run module hierarchy emission after verilog emission, which ensures we
-    // pick up any changes that verilog emission made.
-    if (exportModuleHierarchy)
-      pm.addPass(sv::createHWExportModuleHierarchyPass(outputFilename));
-  }
+    if (checkCombCycles)
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createCheckCombCyclesPass());
+
+    // If we parsed a FIRRTL file and have optimizations enabled, clean it up.
+    if (!disableOptimization && getenv("cano"))
+      pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
+          createSimpleCanonicalizerPass());
+
+    if (inliner)
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createInlinerPass());
+
+    bool nonConstAsyncResetValueIsError = false;
+    if (imconstprop && !disableOptimization) {
+      pm.nest<firrtl::CircuitOp>().addPass(firrtl::createIMConstPropPass());
+    }
+
+    // Read black box source files into the IR.
+    StringRef blackBoxRoot = blackBoxRootPath.empty()
+                                 ? llvm::sys::path::parent_path(inputFilename)
+                                 : blackBoxRootPath;
+    pm.nest<firrtl::CircuitOp>().addPass(firrtl::createBlackBoxReaderPass(
+        blackBoxRoot, blackBoxRootResourcePath.empty()
+                          ? blackBoxRoot
+                          : blackBoxRootResourcePath));
+
+    if (grandCentral) {
+      auto &circuitPM = pm.nest<firrtl::CircuitOp>();
+      circuitPM.addPass(firrtl::createGrandCentralPass());
+      circuitPM.addPass(firrtl::createGrandCentralTapsPass());
+      circuitPM.nest<firrtl::FModuleOp>().addPass(
+          firrtl::createGrandCentralSignalMappingsPass());
+    }
+
+    // The above passes, IMConstProp in particular, introduce additional
+    // canonicalization opportunities that we should pick up here before we
+    // proceed to output-specific pipelines.
+    if (!disableOptimization && getenv("cano"))
+      pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
+          createSimpleCanonicalizerPass());
+
+    if (emitMetadata)
+      pm.nest<firrtl::CircuitOp>().addPass(
+          firrtl::createCreateSiFiveMetadataPass(replSeqMem, replSeqMemCircuit,
+                                                 replSeqMemFile));
+
+    if (emitOMIR)
+      pm.nest<firrtl::CircuitOp>().addPass(
+          firrtl::createEmitOMIRPass(omirOutFile));
+
+    // Lower if we are going to verilog or if lowering was specifically
+    // requested.
+    if (outputFormat != OutputIRFir) {
+      pm.addPass(createLowerFIRRTLToHWPass(enableAnnotationWarning.getValue(),
+                                           nonConstAsyncResetValueIsError));
+      pm.addPass(sv::createHWMemSimImplPass(replSeqMem, ignoreReadEnableMem));
+
+      if (extractTestCode)
+        pm.addPass(sv::createSVExtractTestCodePass());
+
+      // If enabled, run the optimizer.
+      if (!disableOptimization) {
+        auto &modulePM = pm.nest<hw::HWModuleOp>();
+        modulePM.addPass(createCSEPass());
+        modulePM.addPass(createSimpleCanonicalizerPass());
+        modulePM.addPass(sv::createHWCleanupPass());
+      }
+    }
+
+    // Add passes specific to Verilog emission if we're going there.
+    if (outputFormat == OutputVerilog || outputFormat == OutputSplitVerilog ||
+        outputFormat == OutputIRVerilog) {
+      // Legalize unsupported operations within the modules.
+      pm.nest<hw::HWModuleOp>().addPass(sv::createHWLegalizeModulesPass());
+
+      // Tidy up the IR to improve verilog emission quality.
+      if (!disableOptimization) {
+        auto &modulePM = pm.nest<hw::HWModuleOp>();
+        modulePM.addPass(sv::createPrettifyVerilogPass());
+      }
+
+      // Emit a single file or multiple files depending on the output format.
+      switch (outputFormat) {
+      default:
+        llvm_unreachable("can't reach this");
+      case OutputVerilog:
+        pm.addPass(createExportVerilogPass(outputFile.getValue()->os()));
+        break;
+      case OutputSplitVerilog:
+        pm.addPass(createExportSplitVerilogPass(outputFilename));
+        break;
+      case OutputIRVerilog:
+        // Run the ExportVerilog pass to get its lowering, but discard the
+        // output.
+        pm.addPass(createExportVerilogPass(llvm::nulls()));
+        break;
+      }
+
+      // Run module hierarchy emission after verilog emission, which ensures we
+      // pick up any changes that verilog emission made.
+      if (exportModuleHierarchy)
+        pm.addPass(sv::createHWExportModuleHierarchyPass(outputFilename));
+    }
+  };
+  f();
 
   // Load the emitter options from the command line. Command line options if
   // specified will override any module options.
