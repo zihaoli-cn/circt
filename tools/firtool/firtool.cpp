@@ -364,7 +364,7 @@ processBuffer(MLIRContext &context, TimingScope &ts, llvm::SourceMgr &sourceMgr,
       pm.nest<firrtl::CircuitOp>().addPass(firrtl::createCheckCombCyclesPass());
 
     // If we parsed a FIRRTL file and have optimizations enabled, clean it up.
-    if (!disableOptimization && getenv("cano"))
+    if (!disableOptimization)
       pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
           createSimpleCanonicalizerPass());
 
@@ -396,7 +396,7 @@ processBuffer(MLIRContext &context, TimingScope &ts, llvm::SourceMgr &sourceMgr,
     // The above passes, IMConstProp in particular, introduce additional
     // canonicalization opportunities that we should pick up here before we
     // proceed to output-specific pipelines.
-    if (!disableOptimization && getenv("cano"))
+    if (!disableOptimization)
       pm.nest<firrtl::CircuitOp>().nest<firrtl::FModuleOp>().addPass(
           createSimpleCanonicalizerPass());
 
