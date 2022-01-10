@@ -461,7 +461,9 @@ bool TypeLoweringVisitor::lowerProducer(
 
   auto oldAnno = op->getAttr("annotations").dyn_cast_or_null<ArrayAttr>();
 
-  if (!peelType(srcType, fieldTypes, preserveAggregate)) {
+  if (!peelType(srcType, fieldTypes,
+                preserveAggregate && 
+                    !isa<MuxPrimOp, MultibitMuxOp, BitCastOp>(op))) {
     /*
     if (oldAnno && (!innerSym || innerSym.getValue().empty())) {
       for (auto opAttr : oldAnno) {
@@ -602,7 +604,6 @@ bool TypeLoweringVisitor::lowerArg(Operation *module, size_t argIndex,
   SmallVector<FlatBundleFieldEntry> fieldTypes;
   auto srcType = newArgs[argIndex].type.cast<FIRRTLType>();
   if (!peelType(srcType, fieldTypes, allowedToPreserveAggregate)) {
-    return false;
     auto oldAnno = newArgs[argIndex].annotations;
     auto innerSym = newArgs[argIndex].sym;
     if (!innerSym || innerSym.getValue().empty()) {
