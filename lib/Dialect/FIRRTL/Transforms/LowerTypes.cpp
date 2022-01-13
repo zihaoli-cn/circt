@@ -462,8 +462,8 @@ bool TypeLoweringVisitor::lowerProducer(
   auto oldAnno = op->getAttr("annotations").dyn_cast_or_null<ArrayAttr>();
 
   if (!peelType(srcType, fieldTypes,
-                preserveAggregate && 
-                    !isa<MuxPrimOp, MultibitMuxOp, BitCastOp>(op))) {
+                preserveAggregate && /*!oldAnno &&*/
+                    !isa<MuxPrimOp, MultibitMuxOp, BitCastOp, NodeOp>(op))) {
     /*
     if (oldAnno && (!innerSym || innerSym.getValue().empty())) {
       for (auto opAttr : oldAnno) {
