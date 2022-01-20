@@ -1815,6 +1815,8 @@ SubExprInfo ExprEmitter::emitSubExpr(Value exp,
     // wire/logic declaration and set it up so it will be referenced instead of
     // emitted inline.
     auto emitExpressionIntoTemporary = [&]() {
+      LLVM_DEBUG(op->emitRemark() << "spilled to a temporary wire "
+                                     "because of the length limit");
       retroactivelyEmitExpressionIntoTemporary(op);
 
       // Lop this off the buffer we emitted.
@@ -1829,8 +1831,12 @@ SubExprInfo ExprEmitter::emitSubExpr(Value exp,
     // the expression.
     if (!op->hasOneUse() ||
         outBuffer.size() - subExprStartIndex >
-            state.options.maximumNumberOfTokensPerExpression)
+            state.options.maximumNumberOfTokensPerExpression) {
+      LLVM_DEBUG(op->emitRemark()
+                     << "spilled to a temporary wire because of the "
+                     << (op->hasOneUse() ? "lengh limit" : "multiuse"););
       return emitExpressionIntoTemporary();
+    }
   }
 
   // Remember that we emitted this.
@@ -2158,14 +2164,21 @@ SubExprInfo ExprEmitter::visitUnhandledExpr(Operation *op) {
 static bool isExpressionUnableToInline(Operation *op) {
   if (auto cast = dyn_cast<BitcastOp>(op))
     if (!haveMatchingDims(cast.input().getType(), cast.result().getType(),
-                          op->getLoc()))
+                          op->getLoc())) {
+      LLVM_DEBUG(
+          op->emitRemark()
+          << "unable to inline because of the width mismatch in bitcast");
       // Bitcasts rely on the type being assigned to, so we cannot inline.
       return true;
+    }
 
   // StructCreateOp needs to be assigning to a named temporary so that types
   // are inferred properly by verilog
-  if (isa<StructCreateOp>(op))
+  if (isa<StructCreateOp>(op)) {
+    LLVM_DEBUG(op->emitRemark()
+               << "unable to inline because op is struct create");
     return true;
+  }
 
   auto *opBlock = op->getBlock();
 
@@ -2175,8 +2188,11 @@ static bool isExpressionUnableToInline(Operation *op) {
     // If the user is in a different block and the op shouldn't be inlined, then
     // we emit this as an out-of-line declaration into its block and the user
     // can refer to it.
-    if (user->getBlock() != opBlock)
+    if (user->getBlock() != opBlock) {
+      LLVM_DEBUG(op->emitRemark() << "unable to inline because a user exists"
+                                  << " in a different block");
       return true;
+    }
 
     // Verilog bit selection is required by the standard to be:
     // "a vector, packed array, packed structure, parameter or concatenation".
@@ -2187,8 +2203,11 @@ static bool isExpressionUnableToInline(Operation *op) {
     // To handle these, we push the subexpression into a temporary.
     if (isa<ExtractOp, ArraySliceOp, ArrayGetOp, StructExtractOp>(user))
       if (op->getResult(0) == user->getOperand(0) && // ignore index operands.
-          !isOkToBitSelectFrom(op->getResult(0)))
+          !isOkToBitSelectFrom(op->getResult(0))) {
+        LLVM_DEBUG(op->emitRemark() << "unable to inline because of the "
+                                       "bitselect restriction";);
         return true;
+      }
 
     // Always blocks must have a name in their sensitivity list, not an expr.
     if (isa<AlwaysOp>(user) || isa<AlwaysFFOp>(user)) {
@@ -2197,6 +2216,8 @@ static bool isExpressionUnableToInline(Operation *op) {
         if (read.input().getDefiningOp<WireOp>() ||
             read.input().getDefiningOp<RegOp>())
           continue;
+      LLVM_DEBUG(op->emitRemark() << "unable to inline because op is used in a "
+                                     "sensitivity list in always op";);
       return true;
     }
   }
