@@ -196,6 +196,8 @@ private:
     return mergeIfOpConditions(ifOp, prevIfOp);
   }
 
+  void runIfOpToCasezOnBlock(Block &block);
+
   bool anythingChanged;
 };
 } // end anonymous namespace
@@ -326,6 +328,8 @@ void HWCleanupPass::runOnProceduralRegion(Region &region) {
       lastSideEffectingOp = &op;
   }
 
+  runIfOpToCasezOnBlock(body);
+
   for (Operation &op : llvm::make_early_inc_range(body)) {
     // Recursively process any regions in the op.
     if (op.getNumRegions() != 0)
@@ -414,6 +418,70 @@ sv::IfOp HWCleanupPass::mergeIfOpConditions(sv::IfOp ifOp, sv::IfOp prevIfOp) {
   return newIf;
 }
 
+void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
+  Value comparedValue;
+  SmallVector<std::pair<circt::hw::ConstantOp, sv::IfOp>> constantOp;
+  auto constructCaseZ = [&](Operation *op) {
+    if (constantOp.size() <= 1 || !comparedValue) {
+      constantOp.clear();
+      comparedValue = nullptr;
+      return;
+    }
+
+    OpBuilder builder(op->getContext());
+    builder.setInsertionPoint(op);
+    auto casez = builder.create<sv::CaseZOp>(
+        comparedValue.getLoc(), comparedValue, constantOp.size(),
+        [&](size_t caseIdx) -> circt::sv::CaseZPattern {
+          circt::hw::ConstantOp constant = constantOp[caseIdx].first;
+
+          circt::sv::CaseZPattern thePattern =
+              circt::sv::CaseZPattern(constant.getValue(), op->getContext());
+          return thePattern;
+        });
+
+    auto cases = casez.getCases();
+    for (auto idx : llvm::seq(0ul, constantOp.size())) {
+      auto [_, ifOp] = constantOp[idx];
+      auto block = cases[idx].block;
+      block->getOperations().splice(block->begin(),
+                                    ifOp.getThenBlock()->getOperations());
+      ifOp.erase();
+    }
+
+    constantOp.clear();
+    comparedValue = nullptr;
+  };
+
+  Operation *op = nullptr;
+  for (auto it = body.begin(), end = body.end(); it != end; it++) {
+    op = &*it;
+    if (auto ifop = dyn_cast<sv::IfOp>(op)) {
+      if (!ifop.hasElse()) {
+        if (auto icmpOp =
+                dyn_cast_or_null<comb::ICmpOp>(ifop.cond().getDefiningOp())) {
+          if (icmpOp.predicate() == comb::ICmpPredicate::eq) {
+            if (auto constant = dyn_cast_or_null<circt::hw::ConstantOp>(
+                    icmpOp.rhs().getDefiningOp())) {
+              if (!comparedValue || comparedValue == icmpOp.lhs()) {
+                if (!comparedValue)
+                  comparedValue = icmpOp.lhs();
+
+                constantOp.push_back({constant, ifop});
+                continue;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!mlir::MemoryEffectOpInterface::hasNoEffect(op))
+      constructCaseZ(op);
+  }
+
+  if (op)
+    constructCaseZ(op);
+}
 std::unique_ptr<Pass> circt::sv::createHWCleanupPass() {
   return std::make_unique<HWCleanupPass>();
 }
