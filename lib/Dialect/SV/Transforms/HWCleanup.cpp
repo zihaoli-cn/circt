@@ -17,6 +17,7 @@
 #include "circt/Dialect/Comb/CombOps.h"
 #include "circt/Dialect/HW/HWOps.h"
 #include "circt/Dialect/SV/SVPasses.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
@@ -421,35 +422,42 @@ sv::IfOp HWCleanupPass::mergeIfOpConditions(sv::IfOp ifOp, sv::IfOp prevIfOp) {
 void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
   Value comparedValue;
   SmallVector<std::pair<circt::hw::ConstantOp, sv::IfOp>> constantOp;
+  llvm::MapVector<APInt, SmallVector<sv::IfOp>> newMap;
+
   auto constructCaseZ = [&](Operation *op) {
-    if (constantOp.size() <= 1 || !comparedValue) {
-      constantOp.clear();
+    if (newMap.size() <= 1 || !comparedValue) {
+      newMap.clear();
       comparedValue = nullptr;
       return;
     }
+
+    auto constantOp = newMap.takeVector();
 
     OpBuilder builder(op->getContext());
     builder.setInsertionPoint(op);
     auto casez = builder.create<sv::CaseZOp>(
         comparedValue.getLoc(), comparedValue, constantOp.size(),
         [&](size_t caseIdx) -> circt::sv::CaseZPattern {
-          circt::hw::ConstantOp constant = constantOp[caseIdx].first;
+          auto constant = constantOp[caseIdx].first;
 
           circt::sv::CaseZPattern thePattern =
-              circt::sv::CaseZPattern(constant.getValue(), op->getContext());
+              circt::sv::CaseZPattern(constant, op->getContext());
           return thePattern;
         });
 
     auto cases = casez.getCases();
     for (auto idx : llvm::seq(0ul, constantOp.size())) {
-      auto [_, ifOp] = constantOp[idx];
+      auto [_, ifOps] = constantOp[idx];
       auto block = cases[idx].block;
-      block->getOperations().splice(block->begin(),
-                                    ifOp.getThenBlock()->getOperations());
-      ifOp.erase();
+      for (auto ifOp : llvm::reverse(ifOps)) {
+        block->getOperations().splice(std::prev(block->end()),
+                                      ifOp.getThenBlock()->getOperations());
+        ifOp.erase();
+      }
     }
 
     constantOp.clear();
+    newMap = llvm::MapVector<APInt, SmallVector<sv::IfOp>>();
     comparedValue = nullptr;
   };
 
@@ -466,8 +474,8 @@ void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
               if (!comparedValue || comparedValue == icmpOp.lhs()) {
                 if (!comparedValue)
                   comparedValue = icmpOp.lhs();
-
-                constantOp.push_back({constant, ifop});
+                newMap[constant.getValue()].push_back(ifop);
+                // constantOp.push_back({constant, ifop});
                 continue;
               }
             }
