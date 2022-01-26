@@ -17,11 +17,16 @@
 #include "circt/Dialect/Comb/CombOps.h"
 #include "circt/Dialect/HW/HWOps.h"
 #include "circt/Dialect/SV/SVPasses.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
 using namespace circt;
+using namespace mlir;
+using namespace matchers;
+using namespace comb;
 
 //===----------------------------------------------------------------------===//
 // Helper utilities
@@ -193,6 +198,8 @@ private:
     // TOOD: Handle even when they have else blocks
     if (ifOp.hasElse() || prevIfOp.hasElse())
       return ifOp;
+    if(getenv("disable"))
+    return ifOp;
 
     return mergeIfOpConditions(ifOp, prevIfOp);
   }
@@ -446,14 +453,16 @@ void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
         });
 
     auto cases = casez.getCases();
-    for (auto idx : llvm::seq(0ul, constantOp.size())) {
-      auto [_, ifOps] = constantOp[idx];
+    unsigned idx = 0;
+    for (unsigned idx : llvm::seq(0ul, constantOp.size())) {
       auto block = cases[idx].block;
+      auto ifOps = constantOp[idx].second;
       for (auto ifOp : llvm::reverse(ifOps)) {
         block->getOperations().splice(std::prev(block->end()),
                                       ifOp.getThenBlock()->getOperations());
         ifOp.erase();
       }
+      idx++;
     }
 
     constantOp.clear();
@@ -475,7 +484,6 @@ void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
                 if (!comparedValue)
                   comparedValue = icmpOp.lhs();
                 newMap[constant.getValue()].push_back(ifop);
-                // constantOp.push_back({constant, ifop});
                 continue;
               }
             }
