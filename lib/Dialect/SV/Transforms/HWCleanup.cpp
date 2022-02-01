@@ -198,8 +198,6 @@ private:
     // TOOD: Handle even when they have else blocks
     if (ifOp.hasElse() || prevIfOp.hasElse())
       return ifOp;
-    if(getenv("disable"))
-    return ifOp;
 
     return mergeIfOpConditions(ifOp, prevIfOp);
   }
@@ -428,17 +426,16 @@ sv::IfOp HWCleanupPass::mergeIfOpConditions(sv::IfOp ifOp, sv::IfOp prevIfOp) {
 
 void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
   Value comparedValue;
-  SmallVector<std::pair<circt::hw::ConstantOp, sv::IfOp>> constantOp;
-  llvm::MapVector<APInt, SmallVector<sv::IfOp>> newMap;
+  llvm::MapVector<APInt, SmallVector<sv::IfOp>> caseValueToIfOps;
 
   auto constructCaseZ = [&](Operation *op) {
-    if (newMap.size() <= 1 || !comparedValue) {
-      newMap.clear();
+    if (caseValueToIfOps.size() <= 1 || !comparedValue) {
+      caseValueToIfOps.clear();
       comparedValue = nullptr;
       return;
     }
 
-    auto constantOp = newMap.takeVector();
+    auto constantOp = caseValueToIfOps.takeVector();
 
     OpBuilder builder(op->getContext());
     builder.setInsertionPoint(op);
@@ -457,16 +454,14 @@ void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
     for (unsigned idx : llvm::seq(0ul, constantOp.size())) {
       auto block = cases[idx].block;
       auto ifOps = constantOp[idx].second;
-      for (auto ifOp : llvm::reverse(ifOps)) {
-        block->getOperations().splice(std::prev(block->end()),
+      for (auto ifOp : ifOps) {
+        block->getOperations().splice(block->end(),
                                       ifOp.getThenBlock()->getOperations());
         ifOp.erase();
       }
-      idx++;
     }
 
-    constantOp.clear();
-    newMap = llvm::MapVector<APInt, SmallVector<sv::IfOp>>();
+    caseValueToIfOps = llvm::MapVector<APInt, SmallVector<sv::IfOp>>();
     comparedValue = nullptr;
   };
 
@@ -474,7 +469,7 @@ void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
   for (auto it = body.begin(), end = body.end(); it != end; it++) {
     op = &*it;
     if (auto ifop = dyn_cast<sv::IfOp>(op)) {
-      if (!ifop.hasElse()) {
+      if (!ifop.hasElse())
         if (auto icmpOp =
                 dyn_cast_or_null<comb::ICmpOp>(ifop.cond().getDefiningOp())) {
           if (icmpOp.predicate() == comb::ICmpPredicate::eq) {
@@ -483,14 +478,14 @@ void HWCleanupPass::runIfOpToCasezOnBlock(Block &body) {
               if (!comparedValue || comparedValue == icmpOp.lhs()) {
                 if (!comparedValue)
                   comparedValue = icmpOp.lhs();
-                newMap[constant.getValue()].push_back(ifop);
+                caseValueToIfOps[constant.getValue()].push_back(ifop);
                 continue;
               }
             }
           }
         }
-      }
     }
+
     if (!mlir::MemoryEffectOpInterface::hasNoEffect(op))
       constructCaseZ(op);
   }
