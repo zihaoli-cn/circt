@@ -78,9 +78,10 @@ static void getDeclName(Value value, SmallString<64> &string) {
 }
 
 raw_ostream &operator<<(raw_ostream &os, const FieldRef &fieldRef) {
-  auto t = circt::firrtl::getFieldName(fieldRef);
-  if (!t.empty())
-    return os << t;
+  // If fieldRef points at a declaration, then we can use that name.
+  auto fieldName = circt::firrtl::getFieldName(fieldRef);
+  if (!fieldName.empty())
+    return os << fieldName;
 
   return os << "FieldRef<" << fieldRef.getValue()
             << ", fieldID=" << fieldRef.getFieldID() << ">";

@@ -56,6 +56,16 @@ static FieldRef getFieldRefForGoundTypeValue(Value value) {
   return {value, 0};
 }
 
+/// This function is a wrapper of `getFieldRefFromValue`. Values never be
+/// subfield/subindex unless aggregate preservation is enabled so this function
+/// slightly speeds up the pass.
+static FieldRef getFieldRefFromValueWrapper(Value value) {
+  if (isRoot(value))
+    return {value, 0};
+
+  return circt::firrtl::getFieldRefFromValue(value);
+}
+
 /// This function recursively applies `fn` to leaf ground types of `type`.
 static void
 foreachFIRRTLGroundType(FIRRTLType type,
@@ -478,25 +488,24 @@ LatticeValue IMConstPropPass::getExtendedLatticeValue(FieldRef value,
 
 void IMConstPropPass::markSubelementAccessOp(Operation *subelementAccess) {
   auto result = subelementAccess->getResult(0);
+  auto fieldRef = getFieldRefFromValueWrapper(result);
   if (!result.getType().cast<FIRRTLType>().isGround()) {
     // It is not used by other than subaccess or subfield op, it is necessary to
     // record the dependency.
     if (llvm::all_of(result.getUsers(), [](Operation *op) {
           return isa<SubaccessOp, SubfieldOp>(op);
-        })) {
+        }))
       return;
-    }
 
-    auto fieldRef = getFieldRefFromValue(result);
     foreachFIRRTLGroundType(
-        result.getType().cast<FIRRTLType>(), [&](unsigned id, auto) {
-          fieldRefToSubelementValues[fieldRef.getSubField(id)].push_back(
-              result);
+        result.getType().cast<FIRRTLType>(),
+        [&](unsigned relativeFieldID, auto) {
+          fieldRefToSubelementValues[fieldRef.getSubField(relativeFieldID)]
+              .push_back(result);
         });
     return;
   }
 
-  auto fieldRef = getFieldRefFromValue(result);
   fieldRefToSubelementValues[fieldRef].push_back(result);
 }
 
@@ -534,11 +543,11 @@ void IMConstPropPass::markBlockExecutable(Block *block) {
 void IMConstPropPass::markWireOrUnresetableRegOp(Operation *wireOrReg) {
   auto resultValue = wireOrReg->getResult(0);
   // Each value start out as InvalidValue and is upgraded by connects.
-  foreachFIRRTLGroundType(
-      resultValue.getType().cast<FIRRTLType>(),
-      [&](unsigned id, FIRRTLType dest) {
-        mergeLatticeValue({resultValue, id}, InvalidValueAttr::get(dest));
-      });
+  foreachFIRRTLGroundType(resultValue.getType().cast<FIRRTLType>(),
+                          [&](unsigned relativeFieldID, FIRRTLType dest) {
+                            mergeLatticeValue({resultValue, relativeFieldID},
+                                              InvalidValueAttr::get(dest));
+                          });
 }
 
 void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
@@ -548,11 +557,12 @@ void IMConstPropPass::markRegResetOp(RegResetOp regReset) {
   // Merge all subelements.
   foreachFIRRTLGroundType(
       regReset.getType().cast<FIRRTLType>(),
-      [&](unsigned id, FIRRTLType destType) {
-        mergeLatticeValue({regReset, id},
-                          getExtendedLatticeValue(srcFieldRef.getSubField(id),
-                                                  destType,
-                                                  /*allowTruncation*/ true));
+      [&](unsigned relativeFieldID, FIRRTLType destType) {
+        mergeLatticeValue(
+            {regReset, relativeFieldID},
+            getExtendedLatticeValue(srcFieldRef.getSubField(relativeFieldID),
+                                    destType,
+                                    /*allowTruncation*/ true));
       });
 }
 
@@ -626,11 +636,11 @@ void IMConstPropPass::markInstanceOp(InstanceOp instance) {
 
     // If there is already a value known for modulePortVal make sure to forward
     // it here.
-    foreachFIRRTLGroundType(
-        instancePortVal.getType().cast<FIRRTLType>(),
-        [&](unsigned id, FIRRTLType type) {
-          mergeLatticeValue({instancePortVal, id}, {modulePortVal, id});
-        });
+    foreachFIRRTLGroundType(instancePortVal.getType().cast<FIRRTLType>(),
+                            [&](unsigned fieldID, FIRRTLType type) {
+                              mergeLatticeValue({instancePortVal, fieldID},
+                                                {modulePortVal, fieldID});
+                            });
   }
 }
 
@@ -640,12 +650,12 @@ void IMConstPropPass::visitConnect(ConnectOp connect) {
   auto destType = connect.dest().getType().cast<FIRRTLType>();
 
   // Handle implicit extensions.
-  auto srcValue =
-      getExtendedLatticeValue(getFieldRefFromValue(connect.src()), destType);
+  auto srcValue = getExtendedLatticeValue(
+      getFieldRefFromValueWrapper(connect.src()), destType);
   if (srcValue.isUnknown())
     return;
 
-  auto destFieldRef = getFieldRefFromValue(connect.dest());
+  auto destFieldRef = getFieldRefFromValueWrapper(connect.dest());
   auto destRoot = destFieldRef.getValue();
   auto destFieldID = destFieldRef.getFieldID();
 
@@ -726,7 +736,7 @@ void IMConstPropPass::visitOperation(Operation *op) {
       hasNonGoundTypeOperand = true;
       return false;
     }
-    return isOverdefined(getFieldRefFromValue(value));
+    return isOverdefined(getFieldRefFromValueWrapper(value));
   };
 
   if (llvm::all_of(op->getResults(), isOverdefinedFn))
@@ -744,7 +754,7 @@ void IMConstPropPass::visitOperation(Operation *op) {
     if (!operand.getType().cast<FIRRTLType>().isGround())
       return markOverdefined(op);
 
-    auto &operandLattice = latticeValues[getFieldRefFromValue(operand)];
+    auto &operandLattice = latticeValues[getFieldRefFromValueWrapper(operand)];
 
     // If the operand is an unknown value, then we generally don't want to
     // process it - we want to wait until the value is resolved to by the SCCP
@@ -787,13 +797,14 @@ void IMConstPropPass::visitOperation(Operation *op) {
         resultLattice = LatticeValue::getOverdefined();
     } else { // Folding to an operand results in its value.
       resultLattice =
-          latticeValues[getFieldRefFromValue(foldResult.get<Value>())];
+          latticeValues[getFieldRefFromValueWrapper(foldResult.get<Value>())];
     }
 
     // We do not "merge" the lattice value in, we set it.  This is because the
     // fold functions can produce different values over time, e.g. in the
     // presence of InvalidValue operands that get resolved to other constants.
-    setLatticeValue(getFieldRefFromValue(op->getResult(i)), resultLattice);
+    setLatticeValue(getFieldRefFromValueWrapper(op->getResult(i)),
+                    resultLattice);
   }
 }
 
@@ -808,7 +819,7 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
   // If the lattice value for the specified value is a constant or
   // InvalidValue, update it and return true.  Otherwise return false.
   auto replaceValueIfPossible = [&](Value value) -> bool {
-    auto it = latticeValues.find(getFieldRefFromValue(value));
+    auto it = latticeValues.find(getFieldRefFromValueWrapper(value));
     if (it == latticeValues.end() || it->second.isOverdefined() ||
         it->second.isUnknown())
       return false;
@@ -843,7 +854,7 @@ void IMConstPropPass::rewriteModuleBody(FModuleOp module) {
   for (auto &op : llvm::make_early_inc_range(llvm::reverse(*body))) {
     // Connects to values that we found to be constant can be dropped.
     if (auto connect = dyn_cast<ConnectOp>(op)) {
-      auto destRoot = getFieldRefFromValue(connect.dest());
+      auto destRoot = getFieldRefFromValueWrapper(connect.dest());
       // If dest is a part of an aggregate, we give up to erase connections.
       if (!destRoot.getValue().getType().cast<FIRRTLType>().isGround())
         continue;
