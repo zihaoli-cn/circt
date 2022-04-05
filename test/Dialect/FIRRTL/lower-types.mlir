@@ -1485,4 +1485,11 @@ firrtl.module private @Issue2315(in %x: !firrtl.vector<uint<10>, 5>, in %source:
     in %a: !firrtl.bundle<foo: uint<1>> [#firrtl.subAnno<fieldID=1, {circt.nonlocal = @foo}>],
     in %b: !firrtl.bundle<foo: uint<1>> [#firrtl.subAnno<fieldID=1, {circt.nonlocal = @bar}>]) {
   }
+
+  // CHECK-LABEL: firrtl.module @chiselValNames
+  firrtl.module @chiselValNames() {
+    // CHECK-NEXT: {chisel_name}
+    %a = firrtl.wire sym @a {chisel_name} : !firrtl.bundle<b: uint<1>>
+  }
+
 } // CIRCUIT
