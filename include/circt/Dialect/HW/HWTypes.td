@@ -44,6 +44,12 @@ def ArrayType : DialectType<HWDialect,
     CPred<"::circt::hw::type_isa<circt::hw::ArrayType>($_self)">,
           "an ArrayType", "::circt::hw::TypeAliasOr<circt::hw::ArrayType>">;
 
+// A handle to refer to circt::hw::UnpackedArrayType in ODS.
+def UnpackedArrayType : DialectType<HWDialect,
+    CPred<"::circt::hw::type_isa<circt::hw::UnpackedArrayType>($_self)">,
+          "an UnpackedArrayType", "::circt::hw::TypeAliasOr<circt::hw::UnpackedArrayType>">;
+
+
 // A handle to refer to circt::hw::StructType in ODS.
 def StructType : DialectType<HWDialect,
     CPred<"::circt::hw::type_isa<circt::hw::StructType>($_self)">,

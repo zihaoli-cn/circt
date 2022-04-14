@@ -497,6 +497,38 @@ TypedeclOp TypeAliasType::getTypeDecl(const SymbolCache &cache) {
   return typeScope.lookupSymbol<TypedeclOp>(ref.getLeafReference());
 }
 
+/// Return the element type of an ArrayType or UnpackedArrayType, or null if the
+/// operand isn't an array.
+Type circt::hw::getAnyHWArrayElementType(Type type) {
+  if (!type)
+    return {};
+  if (auto array = hw::type_dyn_cast<hw::ArrayType>(type))
+    return array.getElementType();
+  if (auto array = hw::type_dyn_cast<hw::UnpackedArrayType>(type))
+    return array.getElementType();
+
+  return {};
+}
+
+/// Return the index type of an ArrayType or UnpackedArrayType, or null if the
+/// operand isn't an array.
+Type circt::hw::getAnyHWArrayIndexType(Type type) {
+  if (!type)
+    return {};
+
+  unsigned width;
+  if (auto array = hw::type_dyn_cast<hw::ArrayType>(type))
+    width = array.getSize();
+  else if (auto array = hw::type_dyn_cast<hw::UnpackedArrayType>(type))
+    width = array.getSize();
+  else
+    return Type();
+
+  return IntegerType::get(type.getContext(),
+                          width == 1 ? 1 : llvm::Log2_64_Ceil(width));
+  return {};
+}
+
 void HWDialect::registerTypes() {
   addTypes<
 #define GET_TYPEDEF_LIST

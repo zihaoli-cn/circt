@@ -1176,7 +1176,7 @@ void ReadInOutOp::build(OpBuilder &builder, OperationState &result,
 void ArrayIndexInOutOp::build(OpBuilder &builder, OperationState &result,
                               Value input, Value index) {
   auto resultType = input.getType().cast<InOutType>().getElementType();
-  resultType = getAnyHWArrayElementType(resultType);
+  resultType = circt::hw::getAnyHWArrayElementType(resultType);
   assert(resultType && "input should have 'inout of an array' type");
   build(builder, result, InOutType::get(resultType), input, index);
 }

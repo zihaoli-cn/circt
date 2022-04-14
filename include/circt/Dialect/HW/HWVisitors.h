@@ -29,7 +29,8 @@ public:
     return TypeSwitch<Operation *, ResultType>(op)
         .template Case<ConstantOp,
                        // Array operations
-                       ArraySliceOp, ArrayCreateOp, ArrayConcatOp, ArrayGetOp,
+                       ArraySliceOp, ArrayCreateOp, UnpackedArrayCreateOp,
+                       ArrayConcatOp, ArrayGetOp, UnpackedArrayGetOp,
                        // Struct operations
                        StructCreateOp, StructExtractOp, StructInjectOp,
                        // Cast operation
@@ -69,6 +70,8 @@ public:
   HANDLE(ArrayGetOp, Unhandled);
   HANDLE(ArrayCreateOp, Unhandled);
   HANDLE(ArrayConcatOp, Unhandled);
+  HANDLE(UnpackedArrayCreateOp, Unhandled);
+  HANDLE(UnpackedArrayGetOp, Unhandled);
 #undef HANDLE
 };
 

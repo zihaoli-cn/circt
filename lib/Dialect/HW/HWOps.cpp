@@ -1625,6 +1625,53 @@ LogicalResult ArraySliceOp::verify() {
   return success();
 }
 
+ParseResult UnpackedArrayCreateOp::parse(OpAsmParser &parser,
+                                         OperationState &result) {
+  llvm::SMLoc inputOperandsLoc = parser.getCurrentLocation();
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 16> operands;
+  Type elemType;
+
+  if (parser.parseOperandList(operands) ||
+      parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(elemType))
+    return failure();
+
+  if (operands.size() == 0)
+    return parser.emitError(inputOperandsLoc,
+                            "Cannot construct an array of length 0");
+  result.addTypes({UnpackedArrayType::get(elemType, operands.size())});
+
+  for (auto operand : operands)
+    if (parser.resolveOperand(operand, elemType, result.operands))
+      return failure();
+  return success();
+}
+
+void UnpackedArrayCreateOp::print(OpAsmPrinter &p) {
+  p << " ";
+  p.printOperands(inputs());
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : " << inputs()[0].getType();
+}
+
+void UnpackedArrayCreateOp::build(OpBuilder &b, OperationState &state,
+                                  ValueRange values) {
+  assert(values.size() > 0 && "Cannot build array of zero elements");
+  Type elemType = values[0].getType();
+  assert(llvm::all_of(
+             values,
+             [elemType](Value v) -> bool { return v.getType() == elemType; }) &&
+         "All values must have same type.");
+  build(b, state, UnpackedArrayType::get(elemType, values.size()), values);
+}
+
+LogicalResult UnpackedArrayCreateOp::verify() {
+  unsigned returnSize = getType().cast<UnpackedArrayType>().getSize();
+  if (inputs().size() != returnSize)
+    return failure();
+  return success();
+}
+
 static ParseResult parseArrayConcatTypes(OpAsmParser &p,
                                          SmallVectorImpl<Type> &inputTypes,
                                          Type &resultType) {
@@ -1952,6 +1999,17 @@ OpFoldResult ArrayGetOp::fold(ArrayRef<Attribute> operands) {
   if (idx >= createInputs.size())
     return {};
   return createInputs[createInputs.size() - idx - 1];
+}
+
+//===----------------------------------------------------------------------===//
+// UnpackedArrayGetOp
+//===----------------------------------------------------------------------===//
+
+void UnpackedArrayGetOp::build(OpBuilder &builder, OperationState &result,
+                               Value input, Value index) {
+  auto resultType =
+      type_cast<hw::UnpackedArrayType>(input.getType()).getElementType();
+  build(builder, result, resultType, input, index);
 }
 
 //===----------------------------------------------------------------------===//

@@ -68,7 +68,7 @@ def ArrayTypeImpl : HWType<"Array"> {
 }
 
 // An 'unpacked' array of fixed size.
-def UnpackedArrayType : HWType<"UnpackedArray"> {
+def UnpackedArrayTypeImpl : HWType<"UnpackedArray"> {
   let summary = "SystemVerilog 'unpacked' fixed-sized array";
   let description = [{
     Unpacked arrays are a more flexible array representation than packed arrays,

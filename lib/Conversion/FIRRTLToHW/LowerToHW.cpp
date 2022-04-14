@@ -3286,8 +3286,16 @@ LogicalResult FIRRTLLowering::visitExpr(MultibitMuxOp op) {
       return failure();
     loweredInputs.push_back(lowered);
   }
-  Value array = builder.create<hw::ArrayCreateOp>(loweredInputs);
-  Value inBoundsRead = builder.create<hw::ArrayGetOp>(array, index);
+  auto ty = lowerType(op.getType());
+  auto value = builder.create<hw::UnpackedArrayCreateOp>(loweredInputs);
+  auto array = builder.create<sv::WireOp>(value.getType());
+  builder.create<sv::AssignOp>(array, value);
+  // for (auto input : loweredInputs) {
+  //   Value idx = builder.create<sv::ArrayIndexInOutOp>(array, index);
+  // }
+
+  Value idx = builder.create<sv::ArrayIndexInOutOp>(array, index);
+  Value inBoundsRead = builder.create<sv::ReadInOutOp>(idx);
 
   // If the multi-bit mux can never have an out-of-bounds read, then lower it
   // into a HW multi-bit mux.
@@ -3302,9 +3310,10 @@ LogicalResult FIRRTLLowering::visitExpr(MultibitMuxOp op) {
   // TODO: Explore alternatives that don't rely on SFC-exact behavior or guard
   // against this situation happeneing, e.g., by emitting an SV assertion to
   // error if an out-of-bounds read ever occurs.
-  Value zerothRead = builder.create<hw::ArrayGetOp>(
+  Value zeroIdx = builder.create<sv::ArrayIndexInOutOp>(
       array,
       getOrCreateIntConstant(index.getType().getIntOrFloatBitWidth(), 0));
+  Value zerothRead = builder.create<sv::ReadInOutOp>(zeroIdx);
   Value isOutOfBounds = builder.create<comb::ICmpOp>(
       ICmpPredicate::uge, index,
       getOrCreateIntConstant(index.getType().getIntOrFloatBitWidth(),

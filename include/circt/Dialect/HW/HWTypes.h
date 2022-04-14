@@ -119,6 +119,14 @@ public:
   operator BaseTy() const { return type_cast<BaseTy>(*this); }
 };
 
+/// Return the element type of an ArrayType or UnpackedArrayType, or null if
+/// the operand isn't an array.
+mlir::Type getAnyHWArrayElementType(mlir::Type type);
+
+/// Return the index type of an ArrayType or UnpackedArrayType, or null if the
+/// operand isn't an array. e.g.
+mlir::Type getAnyHWArrayIndexType(mlir::Type type);
+
 } // namespace hw
 } // namespace circt
 

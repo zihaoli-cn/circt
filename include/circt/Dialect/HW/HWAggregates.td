@@ -109,16 +109,12 @@ def ArraySliceOp : HWOp<"array_slice", [NoSideEffect]> {
 class IndexBitWidthConstraint<string index, string input>
   : TypesMatchWith<"Index width should be exactly clog2 (size of array)",
                    input, index,
-                   [{
-    IntegerType::get($_self.getContext(),
-                     type_cast<ArrayType>($_self).getSize() == 1 ? 1 :
-                     llvm::Log2_64_Ceil(type_cast<ArrayType>($_self).getSize()))
-                   }]>;
+                   "getAnyHWArrayIndexType($_self)">;
 
 class ArrayElementTypeConstraint<string result, string input>
   : TypesMatchWith<"Result must be arrays element type",
                    input, result,
-                   "type_cast<ArrayType>($_self).getElementType()">;
+                   "getAnyHWArrayElementType($_self)">;
 
 // hw.array_get does not work with unpacked arrays.
 def ArrayGetOp : HWOp<"array_get",
@@ -222,4 +218,47 @@ def UnionExtractOp : HWOp<"union_extract", [NoSideEffect]> {
   let arguments = (ins UnionType:$input, StrAttr:$field);
   let results = (outs HWNonInOutType:$result);
   let hasCustomAssemblyFormat = 1;
+}
+
+def UnpackedArrayCreateOp : HWOp<"unpacked_array_create",
+                                  [NoSideEffect, SameTypeOperands]> {
+  let summary = "Create an unpacked array from values";
+  let description = [{
+    Creates an unpacked array from a variable set of values.
+    One or more values must be listed.
+
+    ```
+    // %a, %b, %c are all i4
+    %array = hw.unpacked_array_create %a, %b, %c : i4
+    ```
+
+    See the HW-SV rationale document for details on operand ordering.
+  }];
+
+  let arguments = (ins Variadic<HWNonInOutType>:$inputs);
+  let results = (outs UnpackedArrayType:$result);
+
+  let hasVerifier = 1;
+
+  let hasCustomAssemblyFormat = 1;
+  let builders = [
+    // ValueRange needs to contain at least one element.
+    OpBuilder<(ins "ValueRange":$input)>
+  ];
+}
+
+def UnpackedArrayGetOp : HWOp<"unpacked_array_get",
+    [NoSideEffect, IndexBitWidthConstraint<"index", "input">,
+     ArrayElementTypeConstraint<"result", "input">]> {
+  let summary = "Get the value in an unpacked array at the specified index";
+  let arguments = (ins UnpackedArrayType:$input, HWIntegerType:$index);
+  let results = (outs HWNonInOutType:$result);
+
+  let assemblyFormat = [{
+    $input`[`$index`]` attr-dict `:` qualified(type($input))
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Value":$input, "Value":$index)>
+  ];
 }

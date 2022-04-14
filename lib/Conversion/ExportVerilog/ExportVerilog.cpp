@@ -144,6 +144,8 @@ static bool isDuplicatableExpression(Operation *op) {
   // We only inline array_get with a constant index.
   if (auto array = dyn_cast<hw::ArrayGetOp>(op))
     return array.index().getDefiningOp<ConstantOp>();
+  if (auto array = dyn_cast<hw::UnpackedArrayGetOp>(op))
+    return array.index().getDefiningOp<ConstantOp>();
 
   return false;
 }
@@ -1541,6 +1543,8 @@ private:
   SubExprInfo visitTypeOp(ArrayGetOp op);
   SubExprInfo visitTypeOp(ArrayCreateOp op);
   SubExprInfo visitTypeOp(ArrayConcatOp op);
+  SubExprInfo visitTypeOp(UnpackedArrayGetOp op);
+  SubExprInfo visitTypeOp(UnpackedArrayCreateOp op);
   SubExprInfo visitTypeOp(StructCreateOp op);
   SubExprInfo visitTypeOp(StructExtractOp op);
   SubExprInfo visitTypeOp(StructInjectOp op);
@@ -2031,6 +2035,26 @@ SubExprInfo ExprEmitter::visitTypeOp(ArrayCreateOp op) {
   return {Unary, IsUnsigned};
 }
 
+SubExprInfo ExprEmitter::visitTypeOp(UnpackedArrayGetOp op) {
+  emitSubExpr(op.input(), Selection);
+  os << '[';
+  emitSubExpr(op.index(), LowestPrecedence);
+  os << ']';
+  return {Selection, IsUnsigned};
+}
+
+// Syntax from: section 5.11 "Array literals".
+SubExprInfo ExprEmitter::visitTypeOp(UnpackedArrayCreateOp op) {
+  os << "'{";
+  llvm::interleaveComma(op.inputs(), os, [&](Value operand) {
+    // os << "{";
+    emitSubExpr(operand, LowestPrecedence);
+    // os << "}";
+  });
+  os << '}';
+  return {Unary, IsUnsigned};
+}
+
 SubExprInfo ExprEmitter::visitTypeOp(ArrayConcatOp op) {
   os << '{';
   llvm::interleaveComma(op.getOperands(), os,
@@ -2206,7 +2230,8 @@ static bool isExpressionUnableToInline(Operation *op) {
     //     assign bar = {{a}, {b}, {c}, {d}}[idx];
     //
     // To handle these, we push the subexpression into a temporary.
-    if (isa<ExtractOp, ArraySliceOp, ArrayGetOp, StructExtractOp>(user))
+    if (isa<ExtractOp, ArraySliceOp, UnpackedArrayGetOp, ArrayGetOp,
+            StructExtractOp>(user))
       if (op->getResult(0) == user->getOperand(0) && // ignore index operands.
           !isOkToBitSelectFrom(op->getResult(0)))
         return true;
@@ -3558,6 +3583,7 @@ bool StmtEmitter::emitDeclarationForTemporary(Operation *op) {
                               os, op->getLoc()))
     os << ' ';
   os << names.getName(op->getResult(0));
+  emitter.printUnpackedTypePostfix(op->getResult(0).getType(), os);
 
   // Emit the initializer expression for this declaration inline if safe.
   if (!isExpressionEmittedInlineIntoProceduralDeclaration(op, *this))
