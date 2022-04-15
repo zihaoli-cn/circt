@@ -353,26 +353,43 @@ void HWMemSimImpl::generateMemory(HWModuleOp op, FirMemory mem) {
       // the same value.
       b.create<sv::IfDefProceduralOp>("RANDOMIZE_MEM_INIT", [&]() {
         SmallString<32> rhs;
-        if (mem.dataWidth > randomWidth)
-          rhs.append("{");
+        auto name = b.getStringAttr(moduleNamespace.newName("_RANDOM"));
+        auto intTy = b.getIntegerType(
+            ((mem.dataWidth + randomWidth - 1) / randomWidth) * randomWidth);
+        randReg = b.create<sv::RegOp>(hw::ArrayType::get(intTy, mem.depth),
+                                      name, name);
+        rhs.append("{");
         for (size_t i = 0, e = (mem.dataWidth + randomWidth - 1) / randomWidth;
              i != e; ++i) {
           if (i > 0)
             rhs.append(", ");
           rhs.append("{`RANDOM}");
         }
-        if (mem.dataWidth > randomWidth)
-          rhs.append("}");
-        if (mem.dataWidth % randomWidth != 0)
-          ("[" + Twine(mem.dataWidth - 1) + ":0]").toVector(rhs);
-        rhs.append(";");
+        rhs.append("}");
+
+        SmallString<32> regiserInitializaion;
+        regiserInitializaion.append("{");
+        for (size_t i = 0, e = mem.depth; i != e; ++i) {
+          if (i > 0)
+            regiserInitializaion.append(", ");
+          regiserInitializaion.append(rhs);
+        }
+        regiserInitializaion.append("}");
+
+        b.create<sv::VerbatimOp>(
+            b.getStringAttr("{{0}} = " + regiserInitializaion), ValueRange{},
+            b.getArrayAttr(hw::InnerRefAttr::get(op.getNameAttr(),
+                                                 randReg.inner_symAttr())));
 
         b.create<sv::VerbatimOp>(
             b.getStringAttr("for (" + initvar + " = 0; " + initvar + " < " +
                             Twine(mem.depth) + "; " + initvar + " = " +
                             initvar + " + 1)\n" + "  Memory[" + initvar +
-                            "] = " + rhs),
-            ValueRange{}, ArrayAttr{});
+                            "] = {{0}}[" + initvar + "][" +
+                            Twine(mem.dataWidth - 1) + ":0];"),
+            ValueRange{},
+            b.getArrayAttr(hw::InnerRefAttr::get(op.getNameAttr(),
+                                                 randReg.inner_symAttr())));
       });
 
       // Register randomization logic.  Randomize every register to a random
