@@ -367,17 +367,18 @@ void HWMemSimImpl::generateMemory(HWModuleOp op, FirMemory mem) {
         }
         rhs.append("}");
 
-        SmallString<32> regiserInitializaion;
-        regiserInitializaion.append("{");
+        SmallString<32> rhsArray;
+        rhsArray.append("{");
         for (size_t i = 0, e = mem.depth; i != e; ++i) {
           if (i > 0)
-            regiserInitializaion.append(", ");
-          regiserInitializaion.append(rhs);
+            rhsArray.append(", ");
+          rhsArray.append(rhs);
         }
-        regiserInitializaion.append("}");
+        rhsArray.append("}");
 
         b.create<sv::VerbatimOp>(
-            b.getStringAttr("{{0}} = " + regiserInitializaion), ValueRange{},
+            b.getStringAttr("{{0}} = " + rhsArray + ";"),
+            ValueRange{},
             b.getArrayAttr(hw::InnerRefAttr::get(op.getNameAttr(),
                                                  randReg.inner_symAttr())));
 
