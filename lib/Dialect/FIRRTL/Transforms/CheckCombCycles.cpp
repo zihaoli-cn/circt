@@ -17,10 +17,13 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/Support/Debug.h"
 #include <variant>
 
 using namespace circt;
 using namespace firrtl;
+
+#define DEBUG_TYPE "firrtl-check-comb-cycles"
 
 //===----------------------------------------------------------------------===//
 // Node class
@@ -463,10 +466,15 @@ struct GraphTraits<Node> {
 //===----------------------------------------------------------------------===//
 
 namespace {
+
+using SCCIterator = llvm::scc_iterator<Node>;
 /// This pass constructs a local graph for each module to detect combinational
 /// cycles. To capture the cross-module combinational cycles, this pass inlines
 /// the combinational paths between IOs of its subinstances into a subgraph and
 /// encodes them in a `combPathsMap`.
+
+// Sample a simple path from SCC.
+SmallVector<Node> sampleSimplePath(SCCIterator &scc) {}
 class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
   void runOnOperation() override {
     auto &instanceGraph = getAnalysis<InstanceGraph>();
@@ -485,7 +493,6 @@ class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
         // FIRRTL module is an SSA region, all cycles must contain at least one
         // connect op. Thus we introduce a dummy source node to iterate on the
         // `dest`s of all connect ops in the module.
-        using SCCIterator = llvm::scc_iterator<Node>;
         for (auto combSCC = SCCIterator::begin(dummyNode); !combSCC.isAtEnd();
              ++combSCC) {
           if (combSCC.hasCycle()) {
@@ -494,6 +501,7 @@ class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
                 module.getLoc(),
                 "detected combinational cycle in a FIRRTL module");
             for (auto node : *combSCC) {
+              llvm::dbgs() << node.value << "\n";
               auto &noteDiag = errorDiag.attachNote(node.value.getLoc());
               noteDiag << "this operation is part of the combinational cycle";
             }
