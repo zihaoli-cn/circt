@@ -17,6 +17,7 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/Debug.h"
 #include <variant>
 
@@ -209,6 +210,8 @@ public:
     return *this;
   }
 
+  unsigned getPortNumber() const { return *portIt; }
+
 private:
   InstanceOp instance;
   SmallVectorImpl<size_t>::iterator portEnd;
@@ -375,6 +378,8 @@ public:
     }
   }
 
+  const variant_iterator &getIterator() const { return impl; }
+
   Node operator*() {
     switch (impl.index()) {
     case 0:
@@ -468,13 +473,71 @@ struct GraphTraits<Node> {
 namespace {
 
 using SCCIterator = llvm::scc_iterator<Node>;
-/// This pass constructs a local graph for each module to detect combinational
-/// cycles. To capture the cross-module combinational cycles, this pass inlines
-/// the combinational paths between IOs of its subinstances into a subgraph and
-/// encodes them in a `combPathsMap`.
+using GT = llvm::GraphTraits<Node>;
 
-// Sample a simple path from SCC.
-SmallVector<Node> sampleSimplePath(SCCIterator &scc) {}
+// Dump a cycle information.
+void dumpCycle(SmallVector<Node> &cycle, FModuleOp module,
+               mlir::InFlightDiagnostic &diag) {
+  for (unsigned i = 0, e = cycle.size(); i < e; ++i) {
+    auto current = cycle[i];
+    auto next = cycle[(i + 1) % e];
+    for (auto iter = GT::child_begin(current), end = GT::child_end(current);
+         iter != end; ++iter) {
+      auto node = *iter;
+      if (node.value != next.value)
+        continue;
+
+      auto iterater = iter.getIterator();
+      if (std::holds_alternative<InstanceNodeIterator>(iterater)) {
+        auto instance = current.value.getDefiningOp<InstanceOp>();
+        auto in = current.value.cast<OpResult>().getResultNumber();
+        auto out = std::get<InstanceNodeIterator>(iterater).getPortNumber();
+        auto &noteDiag = diag.attachNote(instance.getLoc());
+        // llvm::errs() << module.getPortName noteDiag
+        //              << instance.getPortName(in).str() << " "
+        //              << instance.getPortName(out).str();
+        noteDiag << "this operation is part of the combinational cycle";
+      }
+    }
+  }
+}
+
+// Sample a cycle from SCC.
+SmallVector<Node> sampleCycle(SCCIterator &scc) {
+  llvm::SmallDenseSet<Node, 4> sccNodes;
+  for (auto node : *scc)
+    sccNodes.insert(node);
+
+  auto current = *(*scc).begin();
+  SmallVector<Node> path;
+  SmallDenseMap<Node, unsigned> visitedOrder;
+  while (true) {
+    for (auto child :
+         llvm::make_range(GT::child_begin(current), GT::child_end(current))) {
+      // If the child is out of SCC, we don't explore.
+      if (!sccNodes.contains(child))
+        continue;
+      llvm::dbgs() << " " << child.value;
+
+      auto it = visitedOrder.find(child);
+      // If the child is marked before, path[visitedOrder[c]] ... path.end() is
+      // a cycle.
+      if (it != visitedOrder.end())
+        return SmallVector<Node>(path.begin() + it->second, path.end());
+
+      visitedOrder.insert({child, path.size()});
+      path.push_back(child);
+      current = child;
+      break;
+    }
+  }
+  llvm_unreachable("a cycle must be found in SCC");
+}
+
+/// This pass constructs a local graph for each module to detect combinational
+/// cycles. To capture the cross-module combinational cycles, this pass
+/// inlines the combinational paths between IOs of its subinstances into a
+/// subgraph and encodes them in a `combPathsMap`.
 class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
   void runOnOperation() override {
     auto &instanceGraph = getAnalysis<InstanceGraph>();
@@ -500,8 +563,20 @@ class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
             auto errorDiag = mlir::emitError(
                 module.getLoc(),
                 "detected combinational cycle in a FIRRTL module");
-            for (auto node : *combSCC) {
+            auto cycle = sampleCycle(combSCC);
+            SmallString<8> instancePath = module.getName();
+            dumpCycle(cycle, module, errorDiag);
+            for (auto node : cycle) {
               llvm::dbgs() << node.value << "\n";
+              // if (auto foo = node.value.dyn_cast<OpResult>()) {
+              //   llvm::dbgs() << "Res " << foo.getResultNumber() << "\n";
+              // }
+
+              // if (auto instanceP =
+              //         dyn_cast<InstanceOp>(node.value.getDefiningOp())) {
+              //   llvm::dbgs() << instanceP << "\n";
+              // }
+              SmallString<8> instancePath = module.getName();
               auto &noteDiag = errorDiag.attachNote(node.value.getLoc());
               noteDiag << "this operation is part of the combinational cycle";
             }
