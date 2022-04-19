@@ -280,3 +280,18 @@ hw.module @case_stmt(%arg: i3) {
   }
 
   }
+
+// CHECK-LABEL: @always_cano
+hw.module @always_cano(%arg: i1, %reset:i1) {
+  // CHECK-NEXT: hw.output
+  sv.always posedge %arg {
+  }
+  sv.alwayscomb {
+  }
+  sv.alwaysff (posedge %arg) {
+  }
+  sv.alwaysff (posedge %arg) {
+  } (syncreset : posedge %reset)  {
+  }
+  hw.output
+}

@@ -394,6 +394,16 @@ LogicalResult IfOp::canonicalize(IfOp op, PatternRewriter &rewriter) {
   return success();
 }
 
+template <class Op>
+static LogicalResult canonicalizeAlwaysLikeOp(Op op,
+                                              PatternRewriter &rewriter) {
+  // Erase empty op.
+  if (!op.getBody()->empty())
+    return failure();
+  rewriter.eraseOp(op);
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // AlwaysOp
 
@@ -429,6 +439,11 @@ LogicalResult AlwaysOp::verify() {
   if (events().size() != getNumOperands())
     return emitError("different number of operands and events");
   return success();
+}
+
+void AlwaysOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                           MLIRContext *context) {
+  results.add(canonicalizeAlwaysLikeOp<AlwaysOp>);
 }
 
 static ParseResult parseEventList(
@@ -528,6 +543,16 @@ void AlwaysFFOp::build(OpBuilder &builder, OperationState &result,
     resetCtor();
 }
 
+LogicalResult AlwaysFFOp::canonicalize(AlwaysFFOp op,
+                                       PatternRewriter &rewriter) {
+  if (!op.getBody()->empty())
+    return failure();
+  if (!op.resetBlk().empty() && !op.getResetBlock()->empty())
+  return failure();
+  rewriter.eraseOp(op);
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // AlwaysCombOp
 //===----------------------------------------------------------------------===//
@@ -540,6 +565,11 @@ void AlwaysCombOp::build(OpBuilder &builder, OperationState &result,
 
   if (bodyCtor)
     bodyCtor();
+}
+
+void AlwaysCombOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                               MLIRContext *context) {
+  results.add(canonicalizeAlwaysLikeOp<AlwaysCombOp>);
 }
 
 //===----------------------------------------------------------------------===//

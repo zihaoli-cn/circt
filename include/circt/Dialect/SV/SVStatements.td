@@ -176,6 +176,7 @@ def AlwaysOp : SVOp<"always", [SingleBlock, NoTerminator, NoRegionArguments,
   let assemblyFormat = "custom<EventList>($events, $clocks) $body attr-dict";
 
   let skipDefaultBuilders = 1;
+  let hasCanonicalizer = 1;
   let builders = [
     OpBuilder<(ins "ArrayRef<EventControl>":$event, "ArrayRef<Value>":$cond,
                       CArg<"std::function<void()>", "{}">:$bodyCtor)>
@@ -210,6 +211,7 @@ def AlwaysCombOp : SVOp<"alwayscomb", [SingleBlock, NoTerminator,
   let assemblyFormat = "$body attr-dict";
 
   let skipDefaultBuilders = 1;
+  let hasCanonicalizer = 1;
   let builders = [
     OpBuilder<(ins CArg<"std::function<void()>", "{}">:$bodyCtor)>
   ];
@@ -255,6 +257,7 @@ def AlwaysFFOp : SVOp<"alwaysff", [SingleBlock, NoTerminator, NoRegionArguments,
   }];
 
   let skipDefaultBuilders = 1;
+  let hasCanonicalizeMethod = 1;
   let builders = [
     OpBuilder<(ins "EventControl":$clockEdge, "Value":$clock,
                       CArg<"std::function<void()>", "{}">:$bodyCtor)>,
