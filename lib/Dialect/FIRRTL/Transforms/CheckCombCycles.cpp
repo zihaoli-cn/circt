@@ -479,8 +479,8 @@ using GT = llvm::GraphTraits<Node>;
 void dumpCycle(SmallVector<Node> &cycle, FModuleOp module,
                mlir::InFlightDiagnostic &diag) {
   for (unsigned i = 0, e = cycle.size(); i < e; ++i) {
-    auto current = cycle[i];
-    auto next = cycle[(i + 1) % e];
+    Node current = cycle[i];
+    Node next = cycle[(i + 1) % e];
     for (auto iter = GT::child_begin(current), end = GT::child_end(current);
          iter != end; ++iter) {
       auto node = *iter;
@@ -493,10 +493,14 @@ void dumpCycle(SmallVector<Node> &cycle, FModuleOp module,
         auto in = current.value.cast<OpResult>().getResultNumber();
         auto out = std::get<InstanceNodeIterator>(iterater).getPortNumber();
         auto &noteDiag = diag.attachNote(instance.getLoc());
-        // llvm::errs() << module.getPortName noteDiag
-        //              << instance.getPortName(in).str() << " "
-        //              << instance.getPortName(out).str();
-        noteDiag << "this operation is part of the combinational cycle";
+
+        llvm::errs() << module.getName() << "." << instance.name() << "."
+                     << instance.getPortName(in).str() << "\n"
+                     << module.getName() << "." << instance.name() << "."
+                     << instance.getPortName(out).str() << "\n";
+        // noteDiag << "this operation is part of the combinational cycle";
+      } else {
+        node.value;
       }
     }
   }
@@ -517,7 +521,6 @@ SmallVector<Node> sampleCycle(SCCIterator &scc) {
       // If the child is out of SCC, we don't explore.
       if (!sccNodes.contains(child))
         continue;
-      llvm::dbgs() << " " << child.value;
 
       auto it = visitedOrder.find(child);
       // If the child is marked before, path[visitedOrder[c]] ... path.end() is
@@ -567,7 +570,6 @@ class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
             SmallString<8> instancePath = module.getName();
             dumpCycle(cycle, module, errorDiag);
             for (auto node : cycle) {
-              llvm::dbgs() << node.value << "\n";
               // if (auto foo = node.value.dyn_cast<OpResult>()) {
               //   llvm::dbgs() << "Res " << foo.getResultNumber() << "\n";
               // }
