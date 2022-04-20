@@ -476,35 +476,6 @@ using SCCIterator = llvm::scc_iterator<Node>;
 using GT = llvm::GraphTraits<Node>;
 
 // Dump a cycle information.
-void dumpCycle(SmallVector<Node> &cycle, FModuleOp module,
-               mlir::InFlightDiagnostic &diag) {
-  for (unsigned i = 0, e = cycle.size(); i < e; ++i) {
-    Node current = cycle[i];
-    Node next = cycle[(i + 1) % e];
-    for (auto iter = GT::child_begin(current), end = GT::child_end(current);
-         iter != end; ++iter) {
-      auto node = *iter;
-      if (node.value != next.value)
-        continue;
-
-      auto iterater = iter.getIterator();
-      if (std::holds_alternative<InstanceNodeIterator>(iterater)) {
-        auto instance = current.value.getDefiningOp<InstanceOp>();
-        auto in = current.value.cast<OpResult>().getResultNumber();
-        auto out = std::get<InstanceNodeIterator>(iterater).getPortNumber();
-        auto &noteDiag = diag.attachNote(instance.getLoc());
-
-        llvm::errs() << module.getName() << "." << instance.name() << "."
-                     << instance.getPortName(in).str() << "\n"
-                     << module.getName() << "." << instance.name() << "."
-                     << instance.getPortName(out).str() << "\n";
-        // noteDiag << "this operation is part of the combinational cycle";
-      } else {
-        node.value;
-      }
-    }
-  }
-}
 
 // Sample a cycle from SCC.
 SmallVector<Node> sampleCycle(SCCIterator &scc) {
@@ -537,6 +508,45 @@ SmallVector<Node> sampleCycle(SCCIterator &scc) {
   llvm_unreachable("a cycle must be found in SCC");
 }
 
+void showErrorMessage(SCCIterator &scc, FModuleOp module) {
+  auto diag = mlir::emitError(
+      module.getLoc(), "Detected combinational cycle in a FIRRTL module.");
+  SmallVector<Node> cycle = sampleCycle(scc);
+  for (unsigned i = 0, e = cycle.size(); i < e; ++i) {
+    Node current = cycle[i];
+    Node next = cycle[(i + 1) % e];
+    for (auto iter = GT::child_begin(current), end = GT::child_end(current);
+         iter != end; ++iter) {
+      auto node = *iter;
+      if (node.value != next.value)
+        continue;
+
+      auto iterater = iter.getIterator();
+      auto &noteDiag = diag.attachNote(node.value.getLoc());
+      if (std::holds_alternative<InstanceNodeIterator>(iterater)) {
+        auto instance = current.value.getDefiningOp<InstanceOp>();
+        auto in = current.value.cast<OpResult>().getResultNumber();
+        auto out = std::get<InstanceNodeIterator>(iterater).getPortNumber();
+        noteDiag << instance.name() << "." << instance.getPortName(out).str()
+                 << " <= " << instance.name() << "."
+                 << instance.getPortName(in).str();
+      } else {
+        if (auto arg = node.value.dyn_cast<BlockArgument>())
+          noteDiag << module.getPortName(arg.getArgNumber());
+        else {
+          auto op = node.value.getDefiningOp();
+          TypeSwitch<Operation *>(op)
+              .Case<NodeOp, WireOp, RegOp, RegResetOp>(
+                  [&](auto op) { noteDiag << op.name(); })
+              .Default([&](auto op) {
+                noteDiag << "this operation is part of the combinational cycle";
+              });
+        }
+      }
+    }
+  }
+}
+
 /// This pass constructs a local graph for each module to detect combinational
 /// cycles. To capture the cross-module combinational cycles, this pass
 /// inlines the combinational paths between IOs of its subinstances into a
@@ -563,25 +573,7 @@ class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
              ++combSCC) {
           if (combSCC.hasCycle()) {
             detectedCycle = true;
-            auto errorDiag = mlir::emitError(
-                module.getLoc(),
-                "detected combinational cycle in a FIRRTL module");
-            auto cycle = sampleCycle(combSCC);
-            SmallString<8> instancePath = module.getName();
-            dumpCycle(cycle, module, errorDiag);
-            for (auto node : cycle) {
-              // if (auto foo = node.value.dyn_cast<OpResult>()) {
-              //   llvm::dbgs() << "Res " << foo.getResultNumber() << "\n";
-              // }
-
-              // if (auto instanceP =
-              //         dyn_cast<InstanceOp>(node.value.getDefiningOp())) {
-              //   llvm::dbgs() << instanceP << "\n";
-              // }
-              SmallString<8> instancePath = module.getName();
-              auto &noteDiag = errorDiag.attachNote(node.value.getLoc());
-              noteDiag << "this operation is part of the combinational cycle";
-            }
+            showErrorMessage(combSCC, module);
           }
         }
 
