@@ -77,6 +77,12 @@ static void getDeclName(Value value, SmallString<64> &string) {
       .Case<WireOp, RegOp, RegResetOp>([&](auto op) { string += op.name(); });
 }
 
+std::string getDeclName(Value value) {
+  SmallString<64> str;
+  getDeclName(value, str);
+  return std::string(str);
+}
+
 std::string circt::firrtl::getFieldName(const FieldRef &fieldRef) {
   bool rootKnown;
   return getFieldName(fieldRef, rootKnown);

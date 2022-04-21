@@ -508,43 +508,57 @@ SmallVector<Node> sampleCycle(SCCIterator &scc) {
   llvm_unreachable("a cycle must be found in SCC");
 }
 
-void showErrorMessage(SCCIterator &scc, FModuleOp module) {
-  auto diag = mlir::emitError(
-      module.getLoc(), "Detected combinational cycle in a FIRRTL module.");
+void printSimpleCycle(SCCIterator &scc, FModuleOp module,
+                      mlir::InFlightDiagnostic &diag) {
+
   SmallVector<Node> cycle = sampleCycle(scc);
   for (unsigned i = 0, e = cycle.size(); i < e; ++i) {
     Node current = cycle[i];
-    Node next = cycle[(i + 1) % e];
-    for (auto iter = GT::child_begin(current), end = GT::child_end(current);
-         iter != end; ++iter) {
-      auto node = *iter;
-      if (node.value != next.value)
-        continue;
+    if (auto instance = current.value.getDefiningOp<InstanceOp>()) {
+      Node next = cycle[(i + 1) % e];
+      for (auto iter = GT::child_begin(current), end = GT::child_end(current);
+           iter != end; ++iter) {
+        auto node = *iter;
+        if (node.value != next.value)
+          continue;
 
-      auto iterater = iter.getIterator();
-      auto &noteDiag = diag.attachNote(node.value.getLoc());
-      if (std::holds_alternative<InstanceNodeIterator>(iterater)) {
-        auto instance = current.value.getDefiningOp<InstanceOp>();
-        auto in = current.value.cast<OpResult>().getResultNumber();
-        auto out = std::get<InstanceNodeIterator>(iterater).getPortNumber();
-        noteDiag << instance.name() << "." << instance.getPortName(out).str()
-                 << " <= " << instance.name() << "."
-                 << instance.getPortName(in).str();
-      } else {
-        if (auto arg = node.value.dyn_cast<BlockArgument>())
-          noteDiag << module.getPortName(arg.getArgNumber());
-        else {
-          auto op = node.value.getDefiningOp();
-          TypeSwitch<Operation *>(op)
-              .Case<NodeOp, WireOp, RegOp, RegResetOp>(
-                  [&](auto op) { noteDiag << op.name(); })
-              .Default([&](auto op) {
-                noteDiag << "this operation is part of the combinational cycle";
-              });
+        auto iterater = iter.getIterator();
+        if (std::holds_alternative<InstanceNodeIterator>(iterater)) {
+          auto instance = current.value.getDefiningOp<InstanceOp>();
+          auto in = current.value.cast<OpResult>().getResultNumber();
+          auto out = std::get<InstanceNodeIterator>(iterater).getPortNumber();
+          diag.attachNote(current.value.getLoc())
+              << instance.name() << "." << instance.getPortName(in).str();
+          diag.attachNote(current.value.getLoc())
+              << instance.name() << "." << instance.getPortName(out).str();
         }
+        break;
+      }
+    } else {
+      if (auto arg = current.value.dyn_cast<BlockArgument>()) {
+        diag.attachNote(node.value.getLoc())
+            << module.getPortName(arg.getArgNumber());
+      } else {
+        auto op = current.value.getDefiningOp();
+        TypeSwitch<Operation *>(op)
+            .Case<NodeOp, WireOp, RegOp, RegResetOp>([&](auto op) {
+              diag.attachNote(current.value.getLoc()) << op.name();
+            })
+            .Case<SubfieldOp>([&](SubfieldOp op) {
+              auto name = op.input().getDefiningOp<MemOp>().getPortName(
+                  op.input().cast<OpResult>().getResultNumber());
+
+              diag.attachNote(current.value.getLoc())
+                  << name.str() << "."
+                  << op.input().getType().cast<BundleType>().op.fieldIndex();
+            })
+            .Default([&](auto op) {});
       }
     }
   }
+  break;
+}
+}
 }
 
 /// This pass constructs a local graph for each module to detect combinational
@@ -573,7 +587,17 @@ class CheckCombCyclesPass : public CheckCombCyclesBase<CheckCombCyclesPass> {
              ++combSCC) {
           if (combSCC.hasCycle()) {
             detectedCycle = true;
-            showErrorMessage(combSCC, module);
+            auto errorDiag = mlir::emitError(
+                module.getLoc(),
+                "detected combinational cycle in a FIRRTL module");
+            if (printSimpleCycle)
+              printSimpleCycle(combSCC, module, errorDiag);
+            else {
+              for (auto node : *combSCC) {
+                auto &noteDiag = errorDiag.attachNote(node.value.getLoc());
+                noteDiag << "this operation is part of the combinational cycle";
+              }
+            }
           }
         }
 
